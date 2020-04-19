@@ -1192,11 +1192,10 @@ fhandler_fifo::fixup_after_fork (HANDLE parent)
       /* The child needs its own view of shared memory. */
       if (reopen_shmem () < 0)
 	api_fatal ("Can't reopen shared memory during fork, %E");
-      /* Close unneeded inherited handles */
-      if (!close_on_exec ())
-	for (int i = 0; i < nhandlers; i++)
-	  fc_handler[i].close ();
-      nconnected = nhandlers = 0;
+      if (close_on_exec ())
+	/* Prevent a later attempt to close the non-inherited
+	   pipe-instance handles copied from the parent. */
+	nhandlers = 0;
       if (!(cancel_evt = create_event ()))
 	api_fatal ("Can't create reader thread cancel event during fork, %E");
       if (!(sync_thr = create_event ()))
