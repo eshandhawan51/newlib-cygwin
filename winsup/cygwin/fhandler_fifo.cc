@@ -240,13 +240,73 @@ fhandler_fifo::open_pipe (HANDLE& ph)
 
   status = npfs_handle (npfsh);
   if (!NT_SUCCESS (status))
-    return status;
+    goto out;
   access = GENERIC_WRITE | SYNCHRONIZE;
   InitializeObjectAttributes (&attr, get_pipe_name (),
 			      openflags & O_CLOEXEC ? 0 : OBJ_INHERIT,
 			      npfsh, NULL);
   sharing = FILE_SHARE_READ | FILE_SHARE_WRITE;
   status = NtOpenFile (&ph, access, &attr, &io, sharing, 0);
+out:
+  return status;
+}
+
+/* Wait up to 50ms for a pipe instance to be available, then connect. */
+NTSTATUS
+fhandler_fifo::wait_open_pipe (HANDLE& ph)
+{
+  HANDLE npfsh;
+  HANDLE evt;
+  NTSTATUS status;
+  IO_STATUS_BLOCK io;
+  ULONG pwbuf_size;
+  PFILE_PIPE_WAIT_FOR_BUFFER pwbuf;
+  LONGLONG stamp;
+  LONGLONG orig_timeout = -50 * NS100PERSEC / MSPERSEC; /* 50ms */
+
+  status = npfs_handle (npfsh);
+  if (!NT_SUCCESS (status))
+    return status;
+  if (!(evt = create_event ()))
+    api_fatal ("Can't create event, %E");
+  pwbuf_size
+    = offsetof (FILE_PIPE_WAIT_FOR_BUFFER, Name) + get_pipe_name ()->Length;
+  pwbuf = (PFILE_PIPE_WAIT_FOR_BUFFER) alloca (pwbuf_size);
+  pwbuf->Timeout.QuadPart = orig_timeout;
+  pwbuf->NameLength = get_pipe_name ()->Length;
+  pwbuf->TimeoutSpecified = TRUE;
+  memcpy (pwbuf->Name, get_pipe_name ()->Buffer, get_pipe_name ()->Length);
+  stamp = get_clock (CLOCK_MONOTONIC)->n100secs ();
+  bool retry;
+  do
+    {
+      retry = false;
+      status = NtFsControlFile (npfsh, evt, NULL, NULL, &io, FSCTL_PIPE_WAIT,
+				pwbuf, pwbuf_size, NULL, 0);
+      if (status == STATUS_PENDING)
+	{
+	  if (WaitForSingleObject (evt, INFINITE) == WAIT_OBJECT_0)
+	    status = io.Status;
+	  else
+	    api_fatal ("WFSO failed, %E");
+	}
+      if (NT_SUCCESS (status))
+	status = open_pipe (ph);
+      /* Maybe another writer has grabbed the pipe instance or the
+	 pipe hasn't been created yet. */
+      if (STATUS_PIPE_NO_INSTANCE_AVAILABLE (status)
+	  || status == STATUS_OBJECT_NAME_NOT_FOUND)
+	{
+	  /* Adjust the timeout and keep waiting if there's time left. */
+	  pwbuf->Timeout.QuadPart = orig_timeout
+	    + get_clock (CLOCK_MONOTONIC)->n100secs () - stamp;
+	  if (pwbuf->Timeout.QuadPart < 0)
+	    retry = true;
+	  else
+	    status = STATUS_IO_TIMEOUT;
+	}
+    }
+  while (retry);
   return status;
 }
 
@@ -567,14 +627,15 @@ fhandler_fifo::open (int flags, mode_t)
       me.winpid = GetCurrentProcessId ();
       me.fh = this;
       new cygthread (fifo_reader_thread, this, "fifo_reader", sync_thr);
+      /* Wait until the frt is listening.  Otherwise there could be
+	 timing problems when open_pipe is called. */
+      WaitForSingleObject (listening_evt, INFINITE);
 
       /* If we're a duplexer, we need a handle for writing. */
       if (duplexer)
 	{
 	  HANDLE ph = NULL;
 
-	  /* Wait until the frt is listening. */
-	  WaitForSingleObject (listening_evt, INFINITE);
 	  NTSTATUS status = open_pipe (ph);
 	  if (NT_SUCCESS (status))
 	    {
@@ -608,43 +669,35 @@ fhandler_fifo::open (int flags, mode_t)
 
       while (1)
 	{
-	  if (!wait (read_ready))
-	    goto err_close_listening_evt;
-
-	  /* If there are a lot of writers trying to connect
-	     simultaneously, it might take several tries.  */
-	  int retries = 10000;
-	  NTSTATUS status;
-
-	  while (retries-- > 0)
+	  WaitForSingleObject (listening_evt, INFINITE);
+	  NTSTATUS status = wait_open_pipe (get_handle ());
+	  if (NT_SUCCESS (status))
 	    {
-	      if (!is_nonblocking ())
-		WaitForSingleObject (listening_evt, INFINITE);
-	      status = open_pipe (get_handle ());
-	      if (NT_SUCCESS (status))
+	      set_pipe_non_blocking (get_handle (), flags & O_NONBLOCK);
+	      if (!arm (write_ready))
 		{
-		  set_pipe_non_blocking (get_handle (), flags & O_NONBLOCK);
-		  if (!arm (write_ready))
-		    {
-		      __seterrno ();
-		      goto err_close_listening_evt
-		    }
-		  else
-		    goto success;
-		}
-	      else if (STATUS_PIPE_NO_INSTANCE_AVAILABLE (status)
-		       || status == STATUS_OBJECT_NAME_NOT_FOUND)
-		continue;
-	      else
-		{
-		  debug_printf ("create of writer failed");
-		  __seterrno_from_nt_status (status);
+		  __seterrno ();
 		  goto err_close_listening_evt;
 		}
+	      else
+		goto success;
 	    }
-	  debug_printf ("No pipe instance available after 10000 tries, %E");
-	  __seterrno_from_nt_status (status);
-	  goto err_close_listening_evt;
+	  else if (status == STATUS_IO_TIMEOUT)
+	    {
+	      if (is_nonblocking ())
+		{
+		  set_errno (EIO);
+		  goto err_close_listening_evt;
+		}
+	      else
+		continue;
+	    }
+	  else
+	    {
+	      debug_printf ("create of writer failed");
+	      __seterrno_from_nt_status (status);
+	      goto err_close_listening_evt;
+	    }
 	}
     }
 success:
