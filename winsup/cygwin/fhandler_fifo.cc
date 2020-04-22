@@ -251,7 +251,10 @@ out:
   return status;
 }
 
-/* Wait up to 50ms for a pipe instance to be available, then connect. */
+/* Wait for a pipe instance to become available, then connect.  We're
+   specifying no timeout below, but we have to check for
+   STATUS_IO_TIMEOUT anyway.  This can happen if too many writers are
+   trying to connect at once. */
 NTSTATUS
 fhandler_fifo::wait_open_pipe (HANDLE& ph)
 {
@@ -261,8 +264,6 @@ fhandler_fifo::wait_open_pipe (HANDLE& ph)
   IO_STATUS_BLOCK io;
   ULONG pwbuf_size;
   PFILE_PIPE_WAIT_FOR_BUFFER pwbuf;
-  LONGLONG stamp;
-  LONGLONG orig_timeout = -50 * NS100PERSEC / MSPERSEC; /* 50ms */
 
   status = npfs_handle (npfsh);
   if (!NT_SUCCESS (status))
@@ -272,15 +273,11 @@ fhandler_fifo::wait_open_pipe (HANDLE& ph)
   pwbuf_size
     = offsetof (FILE_PIPE_WAIT_FOR_BUFFER, Name) + get_pipe_name ()->Length;
   pwbuf = (PFILE_PIPE_WAIT_FOR_BUFFER) alloca (pwbuf_size);
-  pwbuf->Timeout.QuadPart = orig_timeout;
   pwbuf->NameLength = get_pipe_name ()->Length;
-  pwbuf->TimeoutSpecified = TRUE;
+  pwbuf->TimeoutSpecified = FALSE;
   memcpy (pwbuf->Name, get_pipe_name ()->Buffer, get_pipe_name ()->Length);
-  stamp = get_clock (CLOCK_MONOTONIC)->n100secs ();
-  bool retry;
-  do
+  while (1)
     {
-      retry = false;
       status = NtFsControlFile (npfsh, evt, NULL, NULL, &io, FSCTL_PIPE_WAIT,
 				pwbuf, pwbuf_size, NULL, 0);
       if (status == STATUS_PENDING)
@@ -292,21 +289,18 @@ fhandler_fifo::wait_open_pipe (HANDLE& ph)
 	}
       if (NT_SUCCESS (status))
 	status = open_pipe (ph);
-      /* Maybe another writer has grabbed the pipe instance or the
-	 pipe hasn't been created yet. */
-      if (STATUS_PIPE_NO_INSTANCE_AVAILABLE (status)
-	  || status == STATUS_OBJECT_NAME_NOT_FOUND)
-	{
-	  /* Adjust the timeout and keep waiting if there's time left. */
-	  pwbuf->Timeout.QuadPart = orig_timeout
-	    + get_clock (CLOCK_MONOTONIC)->n100secs () - stamp;
-	  if (pwbuf->Timeout.QuadPart < 0)
-	    retry = true;
-	  else
-	    status = STATUS_IO_TIMEOUT;
-	}
+      if (
+	  /* Another writer has grabbed the pipe instance. */
+	  STATUS_PIPE_NO_INSTANCE_AVAILABLE (status)
+	  /* The pipe hasn't been created yet. */
+	  || status == STATUS_OBJECT_NAME_NOT_FOUND
+	  /* Too many writers are trying to connect at once. */
+	  || status == STATUS_IO_TIMEOUT
+	  )
+	continue;
+      else
+	break;
     }
-  while (retry);
   NtClose (evt);
   return status;
 }
@@ -668,37 +662,24 @@ fhandler_fifo::open (int flags, mode_t)
       if (!wait (read_ready))
 	goto err_close_listening_evt;
 
-      while (1)
+      WaitForSingleObject (listening_evt, INFINITE);
+      NTSTATUS status = wait_open_pipe (get_handle ());
+      if (NT_SUCCESS (status))
 	{
-	  WaitForSingleObject (listening_evt, INFINITE);
-	  NTSTATUS status = wait_open_pipe (get_handle ());
-	  if (NT_SUCCESS (status))
+	  set_pipe_non_blocking (get_handle (), flags & O_NONBLOCK);
+	  if (!arm (write_ready))
 	    {
-	      set_pipe_non_blocking (get_handle (), flags & O_NONBLOCK);
-	      if (!arm (write_ready))
-		{
-		  __seterrno ();
-		  goto err_close_listening_evt;
-		}
-	      else
-		goto success;
-	    }
-	  else if (status == STATUS_IO_TIMEOUT)
-	    {
-	      if (is_nonblocking ())
-		{
-		  set_errno (EIO);
-		  goto err_close_listening_evt;
-		}
-	      else
-		continue;
-	    }
-	  else
-	    {
-	      debug_printf ("create of writer failed");
-	      __seterrno_from_nt_status (status);
+	      __seterrno ();
 	      goto err_close_listening_evt;
 	    }
+	  else
+	    goto success;
+	}
+      else
+	{
+	  debug_printf ("create of writer failed");
+	  __seterrno_from_nt_status (status);
+	  goto err_close_listening_evt;
 	}
     }
 success:
