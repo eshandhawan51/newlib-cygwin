@@ -307,6 +307,7 @@ fhandler_fifo::wait_open_pipe (HANDLE& ph)
 	}
     }
   while (retry);
+  NtClose (evt);
   return status;
 }
 
