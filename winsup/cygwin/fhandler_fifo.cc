@@ -69,7 +69,7 @@ static NO_COPY fifo_reader_id_t null_fr_id = { .winpid = 0, .fh = NULL };
 
 fhandler_fifo::fhandler_fifo ():
   fhandler_base (), read_ready (NULL), write_ready (NULL),
-  cancel_evt (NULL), sync_thr (NULL), listening_evt (NULL),
+  cancel_evt (NULL), sync_thr (NULL),
   fc_handler (NULL),
   shandlers (0), nhandlers (0), nconnected (0),
   reader (false), writer (false), duplexer (false),
@@ -404,7 +404,6 @@ fhandler_fifo::thread_func ()
 	  /* Listen for a writer to connect to the new client handler. */
 	  fifo_client_handler& fc = fc_handler[nhandlers - 1];
 	  fifo_client_unlock ();
-	  SetEvent (listening_evt);
 	  owner_unlock ();
 	  NTSTATUS status;
 	  IO_STATUS_BLOCK io;
@@ -472,7 +471,6 @@ fhandler_fifo::thread_func ()
 	      break;		/* ?? */
 	    }
 	  fifo_client_unlock ();
-	  ResetEvent (listening_evt);
 	  if (cancel)
 	    goto canceled;
 	}
@@ -596,13 +594,6 @@ fhandler_fifo::open (int flags, mode_t)
       __seterrno ();
       goto err_close_read_ready;
     }
-  npbuf[0] = 'l';
-  if (!(listening_evt = CreateEvent (sa_buf, true, false, npbuf)))
-    {
-      debug_printf ("CreateEvent for %s failed, %E", npbuf);
-      __seterrno ();
-      goto err_close_write_ready;
-    }
 
   /* If we're reading, signal read_ready, create the shared memory,
      and start the fifo_reader_thread. */
@@ -611,10 +602,10 @@ fhandler_fifo::open (int flags, mode_t)
       if (!arm (read_ready))
 	{
 	  __seterrno ();
-	  goto err_close_listening_evt;
+	  goto err_close_write_ready;
 	}
       if (create_shmem () < 0)
-	goto err_close_listening_evt;
+	goto err_close_write_ready;
       if (!(cancel_evt = create_event ()))
 	goto err_close_shmem;
       if (!(sync_thr = create_event ()))
@@ -622,16 +613,13 @@ fhandler_fifo::open (int flags, mode_t)
       me.winpid = GetCurrentProcessId ();
       me.fh = this;
       new cygthread (fifo_reader_thread, this, "fifo_reader", sync_thr);
-      /* Wait until the frt is listening.  Otherwise there could be
-	 timing problems when open_pipe is called. */
-      WaitForSingleObject (listening_evt, INFINITE);
 
       /* If we're a duplexer, we need a handle for writing. */
       if (duplexer)
 	{
 	  HANDLE ph = NULL;
 
-	  NTSTATUS status = open_pipe (ph);
+	  NTSTATUS status = wait_open_pipe (ph);
 	  if (NT_SUCCESS (status))
 	    {
 	      set_handle (ph);
@@ -660,9 +648,7 @@ fhandler_fifo::open (int flags, mode_t)
   if (writer)
     {
       if (!wait (read_ready))
-	goto err_close_listening_evt;
-
-      WaitForSingleObject (listening_evt, INFINITE);
+	goto err_close_write_ready;
       NTSTATUS status = wait_open_pipe (get_handle ());
       if (NT_SUCCESS (status))
 	{
@@ -670,7 +656,7 @@ fhandler_fifo::open (int flags, mode_t)
 	  if (!arm (write_ready))
 	    {
 	      __seterrno ();
-	      goto err_close_listening_evt;
+	      goto err_close_write_ready;
 	    }
 	  else
 	    goto success;
@@ -679,7 +665,7 @@ fhandler_fifo::open (int flags, mode_t)
 	{
 	  debug_printf ("create of writer failed");
 	  __seterrno_from_nt_status (status);
-	  goto err_close_listening_evt;
+	  goto err_close_write_ready;
 	}
     }
 success:
@@ -696,8 +682,6 @@ err_close_cancel_evt:
 err_close_shmem:
   NtUnmapViewOfSection (NtCurrentProcess (), shmem);
   NtClose (shmem_handle);
-err_close_listening_evt:
-  NtClose (listening_evt);
 err_close_write_ready:
   NtClose (write_ready);
 err_close_read_ready:
@@ -1065,8 +1049,6 @@ fhandler_fifo::close ()
     NtClose (read_ready);
   if (write_ready)
     NtClose (write_ready);
-  if (listening_evt)
-    NtClose (listening_evt);
   return fhandler_base::close ();
 }
 
@@ -1113,13 +1095,6 @@ fhandler_fifo::dup (fhandler_base *child, int flags)
       __seterrno ();
       goto err_close_read_ready;
     }
-  if (!DuplicateHandle (GetCurrentProcess (), listening_evt,
-			GetCurrentProcess (), &fhf->listening_evt,
-			0, !(flags & O_CLOEXEC), DUPLICATE_SAME_ACCESS))
-    {
-      __seterrno ();
-      goto err_close_write_ready;
-    }
   if (reader)
     {
       if (!DuplicateHandle (GetCurrentProcess (), shmem_handle,
@@ -1127,7 +1102,7 @@ fhandler_fifo::dup (fhandler_base *child, int flags)
 			    0, !(flags & O_CLOEXEC), DUPLICATE_SAME_ACCESS))
 	{
 	  __seterrno ();
-	  goto err_close_listening_evt;
+	  goto err_close_write_ready;
 	}
       if (fhf->reopen_shmem () < 0)
 	goto err_close_shmem_handle;
@@ -1150,8 +1125,6 @@ err_close_shmem:
   NtUnmapViewOfSection (GetCurrentProcess (), fhf->shmem);
 err_close_shmem_handle:
   NtClose (fhf->shmem_handle);
-err_close_listening_evt:
-  NtClose (fhf->listening_evt);
 err_close_write_ready:
   NtClose (fhf->write_ready);
 err_close_read_ready:
@@ -1166,7 +1139,6 @@ fhandler_fifo::fixup_after_fork (HANDLE parent)
   fhandler_base::fixup_after_fork (parent);
   fork_fixup (parent, read_ready, "read_ready");
   fork_fixup (parent, write_ready, "write_ready");
-  fork_fixup (parent, listening_evt, "listening_evt");
   if (reader)
     {
       fifo_client_unlock ();
@@ -1203,8 +1175,6 @@ fhandler_fifo::fixup_after_exec ()
       fc_handler = NULL;
       nhandlers = shandlers = nconnected = 0;
       me.winpid = GetCurrentProcessId ();
-      if (!(listening_evt = create_event ()))
-	api_fatal ("Can't create reader thread listening event during exec, %E");
       if (!(cancel_evt = create_event ()))
 	api_fatal ("Can't create reader thread cancel event during exec, %E");
       if (!(sync_thr = create_event ()))
@@ -1219,7 +1189,6 @@ fhandler_fifo::set_close_on_exec (bool val)
   fhandler_base::set_close_on_exec (val);
   set_no_inheritance (read_ready, val);
   set_no_inheritance (write_ready, val);
-  set_no_inheritance (listening_evt, val);
   fifo_client_lock ();
   for (int i = 0; i < nhandlers; i++)
     set_no_inheritance (fc_handler[i].h, val);

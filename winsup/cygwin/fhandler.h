@@ -1345,8 +1345,6 @@ class fhandler_fifo: public fhandler_base
   HANDLE write_ready;
   HANDLE cancel_evt;		/* Signal thread to exit. */
   HANDLE sync_thr;		/* cygthread sync object. */
-  HANDLE listening_evt;		/* The reader thread is listening for
-                                   client connections. */
   UNICODE_STRING pipe_name;
   WCHAR pipe_name_buf[CYGWIN_FIFO_PIPE_NAME_LEN + 1];
   fifo_client_handler *fc_handler; /* Dynamically growing array. */
