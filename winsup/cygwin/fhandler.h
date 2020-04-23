@@ -1320,40 +1320,40 @@ class fifo_shmem_t
   af_unix_spinlock_t _owner_lock;
   fifo_reader_id_t _owner;
 
- public:
-  LONG inc_nreaders () { return InterlockedIncrement (&_nreaders); }
-  LONG dec_nreaders () { return InterlockedDecrement (&_nreaders); }
+public:
+  int inc_nreaders () { return (int) InterlockedIncrement (&_nreaders); }
+  int dec_nreaders () { return (int) InterlockedDecrement (&_nreaders); }
+  fifo_reader_id_t get_owner () const { return _owner; }
+  void set_owner (fifo_reader_id_t fr_id) { _owner = fr_id; }
+
   void owner_lock () { _owner_lock.lock (); }
   void owner_unlock () { _owner_lock.unlock (); }
-  fifo_reader_id_t get_owner () const { return _owner; }
-  fifo_reader_id_t set_owner (fifo_reader_id_t fr_id)
-  {
-    fifo_reader_id_t old_id = _owner;
-    _owner = fr_id;
-    return old_id;
-  }
 
   friend class fhandler_fifo;
 };
 
 class fhandler_fifo: public fhandler_base
 {
-  HANDLE read_ready;
-  HANDLE write_ready;
-  HANDLE cancel_evt;		/* Signal thread to exit. */
-  HANDLE sync_thr;		/* cygthread sync object. */
+  /* Handles to named events shared by all fhandlers for a given FIFO. */
+  HANDLE read_ready;           /* A reader is open; OK for a writer to open. */
+  HANDLE write_ready;          /* A writer is open; OK for a reader to open. */
+
+  /* Handles to non-shared events needed for fifo_reader_threads. */
+  HANDLE cancel_evt;           /* Signal thread to exit. */
+  HANDLE sync_thr;             /* cygthread sync event. */
+
   UNICODE_STRING pipe_name;
   WCHAR pipe_name_buf[CYGWIN_FIFO_PIPE_NAME_LEN + 1];
-  fifo_client_handler *fc_handler; /* Dynamically growing array. */
-  int shandlers;       /* Size of fc_handler array. */
+  fifo_client_handler *fc_handler;        /* Dynamically growing array. */
+  int shandlers;                          /* Size of fc_handler array. */
   int nhandlers, nconnected;
   af_unix_spinlock_t _fifo_client_lock;
   bool reader, writer, duplexer;
   size_t max_atomic_write;
+  fifo_reader_id_t me;
 
   HANDLE shmem_handle;
   fifo_shmem_t *shmem;
-  fifo_reader_id_t me;
 
   bool __reg2 wait (HANDLE);
   static NTSTATUS npfs_handle (HANDLE &);
@@ -1379,14 +1379,13 @@ public:
   DWORD thread_func ();
   void fifo_client_lock () { _fifo_client_lock.lock (); }
   void fifo_client_unlock () { _fifo_client_lock.unlock (); }
-
   void owner_lock () { shmem->owner_lock (); }
   void owner_unlock () { shmem->owner_unlock (); }
-  LONG inc_nreaders () { return shmem->inc_nreaders (); }
-  LONG dec_nreaders () { return shmem->dec_nreaders (); }
+
+  int inc_nreaders () { return shmem->inc_nreaders (); }
+  int dec_nreaders () { return shmem->dec_nreaders (); }
   fifo_reader_id_t get_owner () const { return shmem->get_owner (); }
-  fifo_reader_id_t set_owner (fifo_reader_id_t fr_id)
-  { return shmem->set_owner (fr_id); }
+  void set_owner (fifo_reader_id_t fr_id) { shmem->set_owner (fr_id); }
   fifo_reader_id_t get_me () const { return me; }
 
   int open (int, mode_t);

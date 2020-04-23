@@ -74,7 +74,7 @@ fhandler_fifo::fhandler_fifo ():
   shandlers (0), nhandlers (0), nconnected (0),
   reader (false), writer (false), duplexer (false),
   max_atomic_write (DEFAULT_PIPEBUFSIZE),
-  shmem_handle (NULL), shmem (NULL), me (null_fr_id)
+  me (null_fr_id), shmem_handle (NULL), shmem (NULL)
 {
   pipe_name_buf[0] = L'\0';
   need_fork_fixup (true);
@@ -294,7 +294,10 @@ fhandler_fifo::add_client_handler ()
       void *temp = realloc (fc_handler,
 			    (shandlers += 64) * sizeof (fc_handler[0]));
       if (!temp)
-	return -1;
+	{
+	  shandlers -= 64;
+	  return -1;
+	}
       fc_handler = (fifo_client_handler *) temp;
     }
   ph = create_pipe_instance ();
@@ -344,7 +347,7 @@ fhandler_fifo::thread_func ()
 
       owner_lock ();
       cur_owner = get_owner ();
-      /* Has the owner been set yet? */
+      /* If there's no owner, take ownership. */
       if (!cur_owner)
 	{
 	  set_owner (me);
@@ -352,8 +355,7 @@ fhandler_fifo::thread_func ()
 	  continue;
 	}
       /* If there's an owner but it's not me, wait until there's
-	 something for me to do.  For now, I'll just wait until I'm
-	 canceled. */
+	 something for me to do. */
       else if (cur_owner != me)
 	{
 	  owner_unlock ();
@@ -615,7 +617,7 @@ fhandler_fifo::open (int flags, mode_t)
 
   /* If we're writing, wait for read_ready and then connect to the
      pipe.  This should always succeed quickly if the reader's
-     fifo_reader thread is running.  Then signal write_ready.  */
+     fifo_reader_thread is running.  Then signal write_ready.  */
   if (writer)
     {
       if (!wait (read_ready))
@@ -980,10 +982,7 @@ fhandler_fifo::cancel_reader_thread ()
   if (cancel_evt)
     SetEvent (cancel_evt);
   if (sync_thr)
-    {
-      WaitForSingleObject (sync_thr, INFINITE);
-      NtClose (sync_thr);
-    }
+    WaitForSingleObject (sync_thr, INFINITE);
 }
 
 int
@@ -994,16 +993,18 @@ fhandler_fifo::close ()
       if (dec_nreaders () == 0)
 	ResetEvent (read_ready);
       cancel_reader_thread ();
-      if (cancel_evt)
-	NtClose (cancel_evt);
-      for (int i = 0; i < nhandlers; i++)
-	fc_handler[i].close ();
-      if (fc_handler)
-	free (fc_handler);
       owner_lock ();
       if (get_owner () == me)
 	set_owner (null_fr_id);
       owner_unlock ();
+      for (int i = 0; i < nhandlers; i++)
+	fc_handler[i].close ();
+      if (fc_handler)
+	free (fc_handler);
+      if (cancel_evt)
+	NtClose (cancel_evt);
+      if (sync_thr)
+	NtClose (sync_thr);
       if (shmem)
 	NtUnmapViewOfSection (NtCurrentProcess (), shmem);
       if (shmem_handle)
@@ -1061,6 +1062,13 @@ fhandler_fifo::dup (fhandler_base *child, int flags)
     }
   if (reader)
     {
+      /* Make sure the child starts unlocked. */
+      fhf->fifo_client_unlock ();
+
+      /* Clear handler list; the child never starts as owner. */
+      fhf->nhandlers = fhf->shandlers = fhf->nconnected = 0;
+      fhf->fc_handler = NULL;
+
       if (!DuplicateHandle (GetCurrentProcess (), shmem_handle,
 			    GetCurrentProcess (), &fhf->shmem_handle,
 			    0, !(flags & O_CLOEXEC), DUPLICATE_SAME_ACCESS))
@@ -1074,8 +1082,6 @@ fhandler_fifo::dup (fhandler_base *child, int flags)
 	goto err_close_shmem;
       if (!(fhf->sync_thr = create_event ()))
 	goto err_close_cancel_evt;
-      fhf->nhandlers = fhf->shandlers = fhf->nconnected = 0;
-      fhf->fc_handler = NULL;
       inc_nreaders ();
       fhf->me.fh = fhf;
       new cygthread (fifo_reader_thread, fhf, "fifo_reader", fhf->sync_thr);
@@ -1103,7 +1109,9 @@ fhandler_fifo::fixup_after_fork (HANDLE parent)
   fork_fixup (parent, write_ready, "write_ready");
   if (reader)
     {
+      /* Make sure the child starts unlocked. */
       fifo_client_unlock ();
+
       fork_fixup (parent, shmem_handle, "shmem_handle");
       /* The child needs its own view of shared memory. */
       if (reopen_shmem () < 0)
@@ -1128,7 +1136,9 @@ fhandler_fifo::fixup_after_exec ()
   fhandler_base::fixup_after_exec ();
   if (reader && !close_on_exec ())
     {
+      /* Make sure the child starts unlocked. */
       fifo_client_unlock ();
+
       /* The child needs its own view of shared memory. */
       if (reopen_shmem () < 0)
 	api_fatal ("Can't reopen shared memory during exec, %E");
@@ -1139,6 +1149,9 @@ fhandler_fifo::fixup_after_exec ()
 	api_fatal ("Can't create reader thread cancel event during exec, %E");
       if (!(sync_thr = create_event ()))
 	api_fatal ("Can't create reader thread sync event during exec, %E");
+      /* At this moment we're a new reader.  The count will be
+	 decremented when the parent closes. */
+      inc_nreaders ();
       new cygthread (fifo_reader_thread, this, "fifo_reader", sync_thr);
     }
 }
@@ -1149,8 +1162,11 @@ fhandler_fifo::set_close_on_exec (bool val)
   fhandler_base::set_close_on_exec (val);
   set_no_inheritance (read_ready, val);
   set_no_inheritance (write_ready, val);
-  fifo_client_lock ();
-  for (int i = 0; i < nhandlers; i++)
-    set_no_inheritance (fc_handler[i].h, val);
-  fifo_client_unlock ();
+  if (reader)
+    {
+      fifo_client_lock ();
+      for (int i = 0; i < nhandlers; i++)
+	set_no_inheritance (fc_handler[i].h, val);
+      fifo_client_unlock ();
+    }
 }
