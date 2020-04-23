@@ -98,28 +98,6 @@ sec_user_cloexec (bool cloexec, PSECURITY_ATTRIBUTES sa, PSID sid)
   return cloexec ? sec_user_nih (sa, sid) : sec_user (sa, sid);
 }
 
-bool inline
-fhandler_fifo::arm (HANDLE h)
-{
-#ifdef DEBUGGING
-  const char *what;
-  if (h == read_ready)
-    what = "reader";
-  else
-    what = "writer";
-  debug_only_printf ("arming %s", what);
-#endif
-
-  bool res = SetEvent (h);
-  if (!res)
-#ifdef DEBUGGING
-    debug_printf ("SetEvent for %s failed, %E", what);
-#else
-    debug_printf ("SetEvent failed, %E");
-#endif
-  return res;
-}
-
 static HANDLE
 create_event ()
 {
@@ -599,11 +577,9 @@ fhandler_fifo::open (int flags, mode_t)
      and start the fifo_reader_thread. */
   if (reader)
     {
-      if (!arm (read_ready))
-	{
-	  __seterrno ();
-	  goto err_close_write_ready;
-	}
+      SetEvent (read_ready);
+      if (create_shmem () < 0)
+	goto err_close_write_ready;
       if (create_shmem () < 0)
 	goto err_close_write_ready;
       if (!(cancel_evt = create_event ()))
@@ -653,13 +629,8 @@ fhandler_fifo::open (int flags, mode_t)
       if (NT_SUCCESS (status))
 	{
 	  set_pipe_non_blocking (get_handle (), flags & O_NONBLOCK);
-	  if (!arm (write_ready))
-	    {
-	      __seterrno ();
-	      goto err_close_write_ready;
-	    }
-	  else
-	    goto success;
+	  SetEvent (write_ready);
+	  goto success;
 	}
       else
 	{
