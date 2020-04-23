@@ -1317,15 +1317,12 @@ struct fifo_reader_id_t
 class fifo_shmem_t
 {
   LONG _nreaders;
-  af_unix_spinlock_t _nreaders_lock, _owner_lock;
+  af_unix_spinlock_t _owner_lock;
   fifo_reader_id_t _owner;
 
  public:
-  LONG get_nreaders () const { return _nreaders; }
   LONG inc_nreaders () { return InterlockedIncrement (&_nreaders); }
   LONG dec_nreaders () { return InterlockedDecrement (&_nreaders); }
-  void nreaders_lock () { _nreaders_lock.lock (); }
-  void nreaders_unlock () { _nreaders_lock.unlock (); }
   void owner_lock () { _owner_lock.lock (); }
   void owner_unlock () { _owner_lock.unlock (); }
   fifo_reader_id_t get_owner () const { return _owner; }
@@ -1383,11 +1380,8 @@ public:
   void fifo_client_lock () { _fifo_client_lock.lock (); }
   void fifo_client_unlock () { _fifo_client_lock.unlock (); }
 
-  void nreaders_lock () { shmem->nreaders_lock (); }
-  void nreaders_unlock () { shmem->nreaders_unlock (); }
   void owner_lock () { shmem->owner_lock (); }
   void owner_unlock () { shmem->owner_unlock (); }
-  LONG get_nreaders () const { return shmem->get_nreaders (); }
   LONG inc_nreaders () { return shmem->inc_nreaders (); }
   LONG dec_nreaders () { return shmem->dec_nreaders (); }
   fifo_reader_id_t get_owner () const { return shmem->get_owner (); }

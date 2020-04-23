@@ -577,13 +577,12 @@ fhandler_fifo::open (int flags, mode_t)
      and start the fifo_reader_thread. */
   if (reader)
     {
+      if (create_shmem () < 0)
+	goto err_close_write_ready;
+      inc_nreaders ();
       SetEvent (read_ready);
-      if (create_shmem () < 0)
-	goto err_close_write_ready;
-      if (create_shmem () < 0)
-	goto err_close_write_ready;
       if (!(cancel_evt = create_event ()))
-	goto err_close_shmem;
+	goto err_dec_nreaders;
       if (!(sync_thr = create_event ()))
 	goto err_close_cancel_evt;
       me.winpid = GetCurrentProcessId ();
@@ -611,10 +610,6 @@ fhandler_fifo::open (int flags, mode_t)
       /* Not a duplexer; wait for a writer to connect. */
       else if (!wait (write_ready))
 	goto err_cancel_frt;
-
-      nreaders_lock ();
-      inc_nreaders ();
-      nreaders_unlock ();
       goto success;
     }
 
@@ -643,14 +638,14 @@ success:
   return 1;
 err_cancel_frt:
   cancel_reader_thread ();
-  nreaders_lock ();
-  if (get_nreaders () == 0)
-    ResetEvent (read_ready);
-  nreaders_unlock ();
+/* err_close_sync_thr: */
   NtClose (sync_thr);
 err_close_cancel_evt:
   NtClose (cancel_evt);
-err_close_shmem:
+err_dec_nreaders:
+  if (dec_nreaders () == 0)
+    ResetEvent (read_ready);
+/* err_close_shmem: */
   NtUnmapViewOfSection (NtCurrentProcess (), shmem);
   NtClose (shmem_handle);
 err_close_write_ready:
@@ -996,6 +991,8 @@ fhandler_fifo::close ()
 {
   if (reader)
     {
+      if (dec_nreaders () == 0)
+	ResetEvent (read_ready);
       cancel_reader_thread ();
       if (cancel_evt)
 	NtClose (cancel_evt);
@@ -1003,10 +1000,6 @@ fhandler_fifo::close ()
 	fc_handler[i].close ();
       if (fc_handler)
 	free (fc_handler);
-      nreaders_lock ();
-      if (read_ready && dec_nreaders () == 0)
-	ResetEvent (read_ready);
-      nreaders_unlock ();
       owner_lock ();
       if (get_owner () == me)
 	set_owner (null_fr_id);
@@ -1083,9 +1076,7 @@ fhandler_fifo::dup (fhandler_base *child, int flags)
 	goto err_close_cancel_evt;
       fhf->nhandlers = fhf->shandlers = fhf->nconnected = 0;
       fhf->fc_handler = NULL;
-      nreaders_lock ();
       inc_nreaders ();
-      nreaders_unlock ();
       fhf->me.fh = fhf;
       new cygthread (fifo_reader_thread, fhf, "fifo_reader", fhf->sync_thr);
     }
@@ -1125,9 +1116,7 @@ fhandler_fifo::fixup_after_fork (HANDLE parent)
 	api_fatal ("Can't create reader thread cancel event during fork, %E");
       if (!(sync_thr = create_event ()))
 	api_fatal ("Can't create reader thread sync event during fork, %E");
-      nreaders_lock ();
       inc_nreaders ();
-      nreaders_unlock ();
       me.winpid = GetCurrentProcessId ();
       new cygthread (fifo_reader_thread, this, "fifo_reader", sync_thr);
     }
