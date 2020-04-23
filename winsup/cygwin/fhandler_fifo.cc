@@ -21,6 +21,7 @@
 #include "shared_info.h"
 #include "ntdll.h"
 #include "cygwait.h"
+#include <sys/param.h>
 
 /*
    Overview:
@@ -65,6 +66,9 @@ STATUS_PIPE_EMPTY simply means there's no data to be read. */
 		   || _s == STATUS_PIPE_NOT_AVAILABLE \
 		   || _s == STATUS_PIPE_BUSY; })
 
+/* Number of pages reserved for shared_fc_handler. */
+#define SH_FC_HANDLER_PAGES 100
+
 static NO_COPY fifo_reader_id_t null_fr_id = { .winpid = 0, .fh = NULL };
 
 fhandler_fifo::fhandler_fifo ():
@@ -74,7 +78,8 @@ fhandler_fifo::fhandler_fifo ():
   shandlers (0), nhandlers (0), nconnected (0),
   reader (false), writer (false), duplexer (false),
   max_atomic_write (DEFAULT_PIPEBUFSIZE),
-  me (null_fr_id), shmem_handle (NULL), shmem (NULL)
+  me (null_fr_id), shmem_handle (NULL), shmem (NULL),
+  shared_fc_hdl (NULL), shared_fc_handler (NULL)
 {
   pipe_name_buf[0] = L'\0';
   need_fork_fixup (true);
@@ -284,10 +289,9 @@ fhandler_fifo::wait_open_pipe (HANDLE& ph)
 }
 
 int
-fhandler_fifo::add_client_handler ()
+fhandler_fifo::add_client_handler (bool new_pipe_instance)
 {
   fifo_client_handler fc;
-  HANDLE ph = NULL;
 
   if (nhandlers >= shandlers)
     {
@@ -300,10 +304,13 @@ fhandler_fifo::add_client_handler ()
 	}
       fc_handler = (fifo_client_handler *) temp;
     }
-  ph = create_pipe_instance ();
-  if (!ph)
-    return -1;
-  fc.h = ph;
+  if (new_pipe_instance)
+    {
+      HANDLE ph = create_pipe_instance ();
+      if (!ph)
+	return -1;
+      fc.h = ph;
+    }
   fc_handler[nhandlers++] = fc;
   return 0;
 }
@@ -317,6 +324,26 @@ fhandler_fifo::delete_client_handler (int i)
 	     (nhandlers - i) * sizeof (fc_handler[i]));
 }
 
+/* Delete invalid handlers, recompute nconnected and eof. */
+void
+fhandler_fifo::cleanup_handlers ()
+{
+  int i = 0;
+
+  nconnected = 0;
+  while (i < nhandlers)
+    {
+      if (fc_handler[i].state == fc_invalid)
+	{
+	  delete_client_handler (i);
+	  continue;
+	}
+      if (fc_handler[i].state == fc_connected)
+	nconnected++;
+      i++;
+    }
+}
+
 void
 fhandler_fifo::record_connection (fifo_client_handler& fc)
 {
@@ -324,6 +351,66 @@ fhandler_fifo::record_connection (fifo_client_handler& fc)
   fc.state = fc_connected;
   nconnected++;
   set_pipe_non_blocking (fc.h, true);
+}
+
+/* Called from thread_func with owner_lock in place. */
+int
+fhandler_fifo::update_my_handlers ()
+{
+  close_all_handlers ();
+  fifo_reader_id_t prev = get_prev_owner ();
+  if (!prev)
+    {
+      debug_printf ("No previous owner to copy handles from");
+      return 0;
+    }
+  HANDLE prev_proc;
+  if (prev.winpid == me.winpid)
+    prev_proc =  GetCurrentProcess ();
+  else
+    prev_proc = OpenProcess (PROCESS_DUP_HANDLE, false, prev.winpid);
+  if (!prev_proc)
+    {
+      debug_printf ("Can't open process of previous owner, %E");
+      __seterrno ();
+      return -1;
+    }
+
+  for (int i = 0; i < get_shared_nhandlers (); i++)
+    {
+      /* Should never happen. */
+      if (shared_fc_handler[i].state != fc_connected)
+	continue;
+      if (add_client_handler (false) < 0)
+	api_fatal ("Can't add client handler, %E");
+      fifo_client_handler &fc = fc_handler[nhandlers - 1];
+      if (!DuplicateHandle (prev_proc, shared_fc_handler[i].h,
+			    GetCurrentProcess (), &fc.h, 0,
+			    !close_on_exec (), DUPLICATE_SAME_ACCESS))
+	{
+	  debug_printf ("Failed to duplicate handle of previous owner, %E");
+	  --nhandlers;
+	  return -1;
+	}
+      fc.state = fc_connected;
+    }
+  nconnected = get_shared_nconnected ();
+  return 0;
+}
+
+int
+fhandler_fifo::update_shared_handlers ()
+{
+  cleanup_handlers ();
+  if (nhandlers > get_shared_shandlers ())
+    {
+      if (remap_shared_fc_handler (nhandlers * sizeof (fc_handler[0])) < 0)
+	return -1;
+    }
+  set_shared_nhandlers (nhandlers);
+  set_shared_nconnected (nconnected);
+  memcpy (shared_fc_handler, fc_handler, nhandlers * sizeof (fc_handler[0]));
+  return 0;
 }
 
 static DWORD WINAPI
@@ -351,6 +438,8 @@ fhandler_fifo::thread_func ()
       if (!cur_owner)
 	{
 	  set_owner (me);
+	  if (update_my_handlers () < 0)
+	    api_fatal ("Can't update my handlers, %E");
 	  owner_unlock ();
 	  continue;
 	}
@@ -368,14 +457,7 @@ fhandler_fifo::thread_func ()
 	  /* All client handlers are in the fc_connected or fc_invalid
 	     state.  Delete any invalid clients. */
 	  fifo_client_lock ();
-	  int i = 0;
-	  while (i < nhandlers)
-	    {
-	      if (fc_handler[i].state == fc_invalid)
-		delete_client_handler (i);
-	      else
-		i++;
-	    }
+	  cleanup_handlers ();
 
 	  /* Create a new client handler. */
 	  if (add_client_handler () < 0)
@@ -387,6 +469,9 @@ fhandler_fifo::thread_func ()
 	  owner_unlock ();
 	  NTSTATUS status;
 	  IO_STATUS_BLOCK io;
+	  bool cancel = false;
+	  bool update = false;
+
 	  status = NtFsControlFile (fc.h, conn_evt, NULL, NULL, &io,
 				    FSCTL_PIPE_LISTEN, NULL, 0, NULL, 0);
 	  if (status == STATUS_PENDING)
@@ -399,6 +484,8 @@ fhandler_fifo::thread_func ()
 		  break;
 		case WAIT_OBJECT_0 + 1:
 		  status = STATUS_THREAD_IS_TERMINATING;
+		  cancel = true;
+		  update = true;
 		  break;
 		default:
 		  debug_printf ("WFMO failed, %E");
@@ -408,7 +495,6 @@ fhandler_fifo::thread_func ()
 	    }
 	  HANDLE ph = NULL;
 	  int ps = -1;
-	  bool cancel = false;
 
 	  fifo_client_lock ();
 	  switch (status)
@@ -419,7 +505,6 @@ fhandler_fifo::thread_func ()
 	      ResetEvent (conn_evt);
 	      break;
 	    case STATUS_THREAD_IS_TERMINATING:
-	      cancel = true;
 	      /* Force NtFsControlFile to complete.  Otherwise the next
 		 writer to connect might not be recorded in the client
 		 handler list. */
@@ -451,6 +536,8 @@ fhandler_fifo::thread_func ()
 	      break;		/* ?? */
 	    }
 	  fifo_client_unlock ();
+	  if (update && update_shared_handlers () < 0)
+	    api_fatal ("Can't update shared handlers, %E");
 	  if (cancel)
 	    goto canceled;
 	}
@@ -524,6 +611,100 @@ fhandler_fifo::reopen_shmem ()
   return 0;
 }
 
+/* On first creation, map and commit one page of memory. */
+int
+fhandler_fifo::create_shared_fc_handler ()
+{
+  HANDLE sect;
+  OBJECT_ATTRIBUTES attr;
+  NTSTATUS status;
+  LARGE_INTEGER size
+    = { .QuadPart = (LONGLONG) (SH_FC_HANDLER_PAGES * wincap.page_size ()) };
+  SIZE_T viewsize = get_shared_fc_handler_committed () ?: wincap.page_size ();
+  PVOID addr = NULL;
+  UNICODE_STRING uname;
+  WCHAR shared_fc_name[MAX_PATH];
+
+  __small_swprintf (shared_fc_name, L"fifo-shared-fc.%08x.%016X", get_dev (),
+		    get_ino ());
+  RtlInitUnicodeString (&uname, shared_fc_name);
+  InitializeObjectAttributes (&attr, &uname, OBJ_INHERIT,
+			      get_shared_parent_dir (), NULL);
+  status = NtCreateSection (&sect, STANDARD_RIGHTS_REQUIRED | SECTION_QUERY
+			    | SECTION_MAP_READ | SECTION_MAP_WRITE, &attr,
+			    &size, PAGE_READWRITE, SEC_RESERVE, NULL);
+  if (status == STATUS_OBJECT_NAME_COLLISION)
+    status = NtOpenSection (&sect, STANDARD_RIGHTS_REQUIRED | SECTION_QUERY
+			    | SECTION_MAP_READ | SECTION_MAP_WRITE, &attr);
+  if (!NT_SUCCESS (status))
+    {
+      __seterrno_from_nt_status (status);
+      return -1;
+    }
+  status = NtMapViewOfSection (sect, NtCurrentProcess (), &addr, 0, viewsize,
+			       NULL, &viewsize, ViewShare, 0, PAGE_READWRITE);
+  if (!NT_SUCCESS (status))
+    {
+      NtClose (sect);
+      __seterrno_from_nt_status (status);
+      return -1;
+    }
+  shared_fc_hdl = sect;
+  shared_fc_handler = (fifo_client_handler *) addr;
+  if (!get_shared_fc_handler_committed ())
+    set_shared_fc_handler_committed (viewsize);
+  set_shared_shandlers (viewsize / sizeof (fifo_client_handler));
+  return 0;
+}
+
+/* shared_fc_hdl must be valid when this is called. */
+int
+fhandler_fifo::reopen_shared_fc_handler ()
+{
+  NTSTATUS status;
+  SIZE_T viewsize = get_shared_fc_handler_committed ();
+  PVOID addr = NULL;
+
+  status = NtMapViewOfSection (shared_fc_hdl, NtCurrentProcess (),
+			       &addr, 0, viewsize, NULL, &viewsize,
+			       ViewShare, 0, PAGE_READWRITE);
+  if (!NT_SUCCESS (status))
+    {
+      __seterrno_from_nt_status (status);
+      return -1;
+    }
+  shared_fc_handler = (fifo_client_handler *) addr;
+  return 0;
+}
+
+int
+fhandler_fifo::remap_shared_fc_handler (size_t nbytes)
+{
+  NTSTATUS status;
+  SIZE_T viewsize = roundup2 (nbytes, wincap.page_size ());
+  PVOID addr = NULL;
+
+  if (viewsize > SH_FC_HANDLER_PAGES * wincap.page_size ())
+    {
+      set_errno (ENOMEM);
+      return -1;
+    }
+
+  NtUnmapViewOfSection (NtCurrentProcess (), shared_fc_handler);
+  status = NtMapViewOfSection (shared_fc_hdl, NtCurrentProcess (),
+			       &addr, 0, viewsize, NULL, &viewsize,
+			       ViewShare, 0, PAGE_READWRITE);
+  if (!NT_SUCCESS (status))
+    {
+      __seterrno_from_nt_status (status);
+      return -1;
+    }
+  shared_fc_handler = (fifo_client_handler *) addr;
+  set_shared_fc_handler_committed (viewsize);
+  set_shared_shandlers (viewsize / sizeof (fc_handler[0]));
+  return 0;
+}
+
 int
 fhandler_fifo::open (int flags, mode_t)
 {
@@ -581,6 +762,8 @@ fhandler_fifo::open (int flags, mode_t)
     {
       if (create_shmem () < 0)
 	goto err_close_write_ready;
+      if (create_shared_fc_handler () < 0)
+	goto err_close_shmem;
       inc_nreaders ();
       SetEvent (read_ready);
       if (!(cancel_evt = create_event ()))
@@ -657,7 +840,10 @@ err_close_cancel_evt:
 err_dec_nreaders:
   if (dec_nreaders () == 0)
     ResetEvent (read_ready);
-/* err_close_shmem: */
+/* err_close_shared_fc_handler: */
+  NtUnmapViewOfSection (NtCurrentProcess (), shared_fc_handler);
+  NtClose (shared_fc_hdl);
+err_close_shmem:
   NtUnmapViewOfSection (NtCurrentProcess (), shmem);
   NtClose (shmem_handle);
 err_close_write_ready:
@@ -960,6 +1146,14 @@ fhandler_fifo::fstatvfs (struct statvfs *sfs)
 }
 
 void
+fhandler_fifo::close_all_handlers ()
+{
+  for (int i = 0; i < nhandlers; i++)
+    fc_handler[i].close ();
+  nhandlers = 0;
+}
+
+void
 fifo_client_handler::close ()
 {
   NtClose (h);
@@ -1007,8 +1201,7 @@ fhandler_fifo::close ()
       if (get_owner () == me)
 	set_owner (null_fr_id);
       owner_unlock ();
-      for (int i = 0; i < nhandlers; i++)
-	fc_handler[i].close ();
+      close_all_handlers ();
       if (fc_handler)
 	free (fc_handler);
       if (cancel_evt)
@@ -1019,6 +1212,10 @@ fhandler_fifo::close ()
 	NtUnmapViewOfSection (NtCurrentProcess (), shmem);
       if (shmem_handle)
 	NtClose (shmem_handle);
+      if (shared_fc_handler)
+	NtUnmapViewOfSection (NtCurrentProcess (), shared_fc_handler);
+      if (shared_fc_hdl)
+	NtClose (shared_fc_hdl);
     }
   if (read_ready)
     NtClose (read_ready);
@@ -1088,8 +1285,17 @@ fhandler_fifo::dup (fhandler_base *child, int flags)
 	}
       if (fhf->reopen_shmem () < 0)
 	goto err_close_shmem_handle;
+      if (!DuplicateHandle (GetCurrentProcess (), shared_fc_hdl,
+			    GetCurrentProcess (), &fhf->shared_fc_hdl,
+			    0, !(flags & O_CLOEXEC), DUPLICATE_SAME_ACCESS))
+	{
+	  __seterrno ();
+	  goto err_close_shmem;
+	}
+      if (fhf->reopen_shared_fc_handler () < 0)
+	goto err_close_shared_fc_hdl;
       if (!(fhf->cancel_evt = create_event ()))
-	goto err_close_shmem;
+	goto err_close_shared_fc_handler;
       if (!(fhf->sync_thr = create_event ()))
 	goto err_close_cancel_evt;
       inc_nreaders ();
@@ -1099,6 +1305,10 @@ fhandler_fifo::dup (fhandler_base *child, int flags)
   return 0;
 err_close_cancel_evt:
   NtClose (fhf->cancel_evt);
+err_close_shared_fc_handler:
+  NtUnmapViewOfSection (GetCurrentProcess (), fhf->shared_fc_handler);
+err_close_shared_fc_hdl:
+  NtClose (fhf->shared_fc_hdl);
 err_close_shmem:
   NtUnmapViewOfSection (GetCurrentProcess (), fhf->shmem);
 err_close_shmem_handle:
@@ -1126,6 +1336,9 @@ fhandler_fifo::fixup_after_fork (HANDLE parent)
       /* The child needs its own view of shared memory. */
       if (reopen_shmem () < 0)
 	api_fatal ("Can't reopen shared memory during fork, %E");
+      fork_fixup (parent, shared_fc_hdl, "shared_fc_hdl");
+      if (reopen_shared_fc_handler () < 0)
+	api_fatal ("Can't reopen shared fc_handler memory during fork, %E");
       if (close_on_exec ())
 	/* Prevent a later attempt to close the non-inherited
 	   pipe-instance handles copied from the parent. */
@@ -1152,6 +1365,8 @@ fhandler_fifo::fixup_after_exec ()
       /* The child needs its own view of shared memory. */
       if (reopen_shmem () < 0)
 	api_fatal ("Can't reopen shared memory during exec, %E");
+      if (reopen_shared_fc_handler () < 0)
+	api_fatal ("Can't reopen shared fc_handler memory during exec, %E");
       fc_handler = NULL;
       nhandlers = shandlers = nconnected = 0;
       me.winpid = GetCurrentProcessId ();

@@ -1318,16 +1318,34 @@ class fifo_shmem_t
 {
   LONG _nreaders;
   af_unix_spinlock_t _owner_lock;
-  fifo_reader_id_t _owner;
+  fifo_reader_id_t _owner, _prev_owner;
+
+  /* Info about shared memory block used for temporary storage of the
+     owner's fc_handler list. */
+  LONG _sh_nhandlers, _sh_shandlers, _sh_nconnected, _sh_fc_handler_committed;
 
 public:
   int inc_nreaders () { return (int) InterlockedIncrement (&_nreaders); }
   int dec_nreaders () { return (int) InterlockedDecrement (&_nreaders); }
   fifo_reader_id_t get_owner () const { return _owner; }
   void set_owner (fifo_reader_id_t fr_id) { _owner = fr_id; }
+  fifo_reader_id_t get_prev_owner () const { return _prev_owner; }
+  void set_prev_owner (fifo_reader_id_t fr_id) { _prev_owner = fr_id; }
 
   void owner_lock () { _owner_lock.lock (); }
   void owner_unlock () { _owner_lock.unlock (); }
+
+  int get_shared_nhandlers () const { return (int) _sh_nhandlers; }
+  void set_shared_nhandlers (int n) { InterlockedExchange (&_sh_nhandlers, n); }
+  int get_shared_shandlers () const { return (int) _sh_shandlers; }
+  void set_shared_shandlers (int n) { InterlockedExchange (&_sh_shandlers, n); }
+  int get_shared_nconnected () const { return (int) _sh_nconnected; }
+  void set_shared_nconnected (int n)
+  { InterlockedExchange (&_sh_nconnected, n); }
+  size_t get_shared_fc_handler_committed () const
+  { return (size_t) _sh_fc_handler_committed; }
+  void set_shared_fc_handler_committed (size_t n)
+  { InterlockedExchange (&_sh_fc_handler_committed, (LONG) n); }
 
   friend class fhandler_fifo;
 };
@@ -1354,19 +1372,39 @@ class fhandler_fifo: public fhandler_base
 
   HANDLE shmem_handle;
   fifo_shmem_t *shmem;
+  HANDLE shared_fc_hdl;
+  /* Dynamically growing array in shared memory. */
+  fifo_client_handler *shared_fc_handler;
 
   bool __reg2 wait (HANDLE);
   static NTSTATUS npfs_handle (HANDLE &);
   HANDLE create_pipe_instance ();
   NTSTATUS open_pipe (HANDLE&);
   NTSTATUS wait_open_pipe (HANDLE&);
-  int add_client_handler ();
+  int add_client_handler (bool new_pipe_instance = true);
   void delete_client_handler (int);
+  void cleanup_handlers ();
   void cancel_reader_thread ();
   void record_connection (fifo_client_handler&);
 
+  int get_shared_nhandlers () { return shmem->get_shared_nhandlers (); }
+  void set_shared_nhandlers (int n) { shmem->set_shared_nhandlers (n); }
+  int get_shared_shandlers () { return shmem->get_shared_shandlers (); }
+  void set_shared_shandlers (int n) { shmem->set_shared_shandlers (n); }
+  int get_shared_nconnected () const { return shmem->get_shared_nconnected (); }
+  void set_shared_nconnected (int n) { shmem->set_shared_nconnected (n); }
+  size_t get_shared_fc_handler_committed () const
+  { return shmem->get_shared_fc_handler_committed (); }
+  void set_shared_fc_handler_committed (size_t n)
+  { shmem->set_shared_fc_handler_committed (n); }
+  int update_my_handlers ();
+  int update_shared_handlers ();
+
   int create_shmem ();
   int reopen_shmem ();
+  int create_shared_fc_handler ();
+  int reopen_shared_fc_handler ();
+  int remap_shared_fc_handler (size_t);
 
 public:
   fhandler_fifo ();
@@ -1386,11 +1424,15 @@ public:
   int dec_nreaders () { return shmem->dec_nreaders (); }
   fifo_reader_id_t get_owner () const { return shmem->get_owner (); }
   void set_owner (fifo_reader_id_t fr_id) { shmem->set_owner (fr_id); }
+  fifo_reader_id_t get_prev_owner () const { return shmem->get_prev_owner (); }
+  void set_prev_owner (fifo_reader_id_t fr_id)
+  { shmem->set_prev_owner (fr_id); }
   fifo_reader_id_t get_me () const { return me; }
 
   int open (int, mode_t);
   off_t lseek (off_t offset, int whence);
   int close ();
+  void close_all_handlers ();
   int fcntl (int cmd, intptr_t);
   int dup (fhandler_base *child, int);
   bool isfifo () const { return true; }
