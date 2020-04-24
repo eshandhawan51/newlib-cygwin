@@ -1147,7 +1147,7 @@ fhandler_fifo::raw_read (void *in_ptr, size_t& len)
 	  goto errout;
 	}
       /* Don't hog the CPU. */
-      Sleep (1);
+      yield ();
     }
 errout:
   len = (size_t) -1;
