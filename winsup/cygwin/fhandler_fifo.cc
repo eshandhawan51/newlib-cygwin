@@ -73,6 +73,7 @@ static NO_COPY fifo_reader_id_t null_fr_id = { .winpid = 0, .fh = NULL };
 
 fhandler_fifo::fhandler_fifo ():
   fhandler_base (), read_ready (NULL), write_ready (NULL),
+  owner_needed_evt (NULL), owner_found_evt (NULL),
   cancel_evt (NULL), sync_thr (NULL),
   fc_handler (NULL),
   shandlers (0), nhandlers (0), nconnected (0),
