@@ -612,6 +612,16 @@ fhandler_fifo::open (int flags, mode_t)
       /* Not a duplexer; wait for a writer to connect. */
       else if (!wait (write_ready))
 	goto err_cancel_frt;
+
+      /* Make sure there's an owner. */
+      owner_lock ();
+      while (!get_owner ())
+	{
+	  owner_unlock ();
+	  yield ();
+	  owner_lock ();
+	}
+      owner_unlock ();
       goto success;
     }
 
