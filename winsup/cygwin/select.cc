@@ -850,15 +850,6 @@ peek_fifo (select_record *s, bool from_select)
   int gotone = 0;
   fhandler_fifo *fh = (fhandler_fifo *) s->fh;
 
-  fh->owner_lock ();
-  if (fh->get_owner () != fh->get_me())
-    {
-      fh->owner_unlock ();
-      s->thread_errno = ENOTSUP;
-      return -1;
-    }
-  fh->owner_unlock ();
-
   if (s->read_selected)
     {
       if (s->read_ready)
@@ -875,6 +866,8 @@ peek_fifo (select_record *s, bool from_select)
 	  goto out;
 	}
 
+      fh->reading_lock ();
+      fh->take_ownership ();
       fh->fifo_client_lock ();
       int nconnected = 0;
       for (int i = 0; i < fh->get_nhandlers (); i++)
@@ -891,6 +884,7 @@ peek_fifo (select_record *s, bool from_select)
 	      case FILE_PIPE_INPUT_AVAILABLE_STATE:
 		select_printf ("read: %s, ready for read", fh->get_name ());
 		fh->fifo_client_unlock ();
+		fh->reading_unlock ();
 		gotone += s->read_ready = true;
 		goto out;
 	      default:
@@ -898,6 +892,7 @@ peek_fifo (select_record *s, bool from_select)
 	      }
 	  }
       fh->fifo_client_unlock ();
+      fh->reading_unlock ();
       if (!nconnected)		/* EOF */
 	{
 	  select_printf ("read: %s, saw EOF", fh->get_name ());
