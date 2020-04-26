@@ -875,15 +875,6 @@ peek_fifo (select_record *s, bool from_select)
 	  goto out;
 	}
 
-      if (fh->hit_eof ())
-	{
-	  select_printf ("read: %s, saw EOF", fh->get_name ());
-	  gotone = s->read_ready = true;
-	  if (s->except_selected)
-	    gotone += s->except_ready = true;
-	  goto out;
-	}
-
       fh->fifo_client_lock ();
       for (int i = 0; i < fh->get_nhandlers (); i++)
 	if (fh->is_connected (i))
@@ -899,6 +890,7 @@ peek_fifo (select_record *s, bool from_select)
 		goto out;
 	      }
 	  }
+      /* FIXME: Check for EOF. */
       fh->fifo_client_unlock ();
     }
 out:

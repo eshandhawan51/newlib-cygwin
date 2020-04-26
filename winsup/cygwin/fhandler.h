@@ -1322,7 +1322,7 @@ class fifo_shmem_t
 
   /* Info about shared memory block used for temporary storage of the
      owner's fc_handler list. */
-  LONG _sh_nhandlers, _sh_shandlers, _sh_nconnected, _sh_fc_handler_committed;
+  LONG _sh_nhandlers, _sh_shandlers, _sh_fc_handler_committed;
 
 public:
   int inc_nreaders () { return (int) InterlockedIncrement (&_nreaders); }
@@ -1339,9 +1339,6 @@ public:
   void set_shared_nhandlers (int n) { InterlockedExchange (&_sh_nhandlers, n); }
   int get_shared_shandlers () const { return (int) _sh_shandlers; }
   void set_shared_shandlers (int n) { InterlockedExchange (&_sh_shandlers, n); }
-  int get_shared_nconnected () const { return (int) _sh_nconnected; }
-  void set_shared_nconnected (int n)
-  { InterlockedExchange (&_sh_nconnected, n); }
   size_t get_shared_fc_handler_committed () const
   { return (size_t) _sh_fc_handler_committed; }
   void set_shared_fc_handler_committed (size_t n)
@@ -1368,7 +1365,7 @@ class fhandler_fifo: public fhandler_base
   WCHAR pipe_name_buf[CYGWIN_FIFO_PIPE_NAME_LEN + 1];
   fifo_client_handler *fc_handler;        /* Dynamically growing array. */
   int shandlers;                          /* Size of fc_handler array. */
-  int nhandlers, nconnected;
+  int nhandlers;
   af_unix_spinlock_t _fifo_client_lock;
   bool reader, writer, duplexer;
   size_t max_atomic_write;
@@ -1395,8 +1392,6 @@ class fhandler_fifo: public fhandler_base
   void set_shared_nhandlers (int n) { shmem->set_shared_nhandlers (n); }
   int get_shared_shandlers () { return shmem->get_shared_shandlers (); }
   void set_shared_shandlers (int n) { shmem->set_shared_shandlers (n); }
-  int get_shared_nconnected () const { return shmem->get_shared_nconnected (); }
-  void set_shared_nconnected (int n) { shmem->set_shared_nconnected (n); }
   size_t get_shared_fc_handler_committed () const
   { return shmem->get_shared_fc_handler_committed (); }
   void set_shared_fc_handler_committed (size_t n)
@@ -1412,7 +1407,6 @@ class fhandler_fifo: public fhandler_base
 
 public:
   fhandler_fifo ();
-  bool hit_eof ();
   int get_nhandlers () const { return nhandlers; }
   HANDLE get_fc_handle (int i) const { return fc_handler[i].h; }
   bool is_connected (int i) const

@@ -76,7 +76,7 @@ fhandler_fifo::fhandler_fifo ():
   owner_needed_evt (NULL), owner_found_evt (NULL),
   cancel_evt (NULL), sync_thr (NULL),
   fc_handler (NULL),
-  shandlers (0), nhandlers (0), nconnected (0),
+  shandlers (0), nhandlers (0),
   reader (false), writer (false), duplexer (false),
   max_atomic_write (DEFAULT_PIPEBUFSIZE),
   me (null_fr_id), shmem_handle (NULL), shmem (NULL),
@@ -326,23 +326,18 @@ fhandler_fifo::delete_client_handler (int i)
 	     (nhandlers - i) * sizeof (fc_handler[i]));
 }
 
-/* Delete invalid handlers, recompute nconnected and eof. */
+/* Delete invalid handlers. */
 void
 fhandler_fifo::cleanup_handlers ()
 {
   int i = 0;
 
-  nconnected = 0;
   while (i < nhandlers)
     {
       if (fc_handler[i].state == fc_invalid)
-	{
-	  delete_client_handler (i);
-	  continue;
-	}
-      if (fc_handler[i].state == fc_connected)
-	nconnected++;
-      i++;
+	delete_client_handler (i);
+      else
+	i++;
     }
 }
 
@@ -351,7 +346,6 @@ fhandler_fifo::record_connection (fifo_client_handler& fc)
 {
   SetEvent (write_ready);
   fc.state = fc_connected;
-  nconnected++;
   set_pipe_non_blocking (fc.h, true);
 }
 
@@ -420,7 +414,6 @@ fhandler_fifo::update_my_handlers (bool from_exec)
 	  fc.state = fc_connected;
 	}
     }
-  nconnected = get_shared_nconnected ();
   return 0;
 }
 
@@ -434,7 +427,6 @@ fhandler_fifo::update_shared_handlers ()
 	return -1;
     }
   set_shared_nhandlers (nhandlers);
-  set_shared_nconnected (nconnected);
   memcpy (shared_fc_handler, fc_handler, nhandlers * sizeof (fc_handler[0]));
   return 0;
 }
@@ -1060,30 +1052,6 @@ fhandler_fifo::raw_write (const void *ptr, size_t len)
   return ret;
 }
 
-/* A FIFO open for reading is at EOF if no process has it open for
-   writing.  We test this by checking nconnected.  But we must take
-   account of the possible delay from the time of connection to the
-   time the connection is recorded by the fifo_reader thread. */
-bool
-fhandler_fifo::hit_eof ()
-{
-  bool eof;
-  bool retry = true;
-
-repeat:
-      fifo_client_lock ();
-      eof = (nconnected == 0);
-      fifo_client_unlock ();
-      if (eof && retry)
-	{
-	  retry = false;
-	  /* Give the fifo_reader thread time to catch up. */
-	  Sleep (1);
-	  goto repeat;
-	}
-  return eof;
-}
-
 void __reg3
 fhandler_fifo::raw_read (void *in_ptr, size_t& len)
 {
@@ -1101,12 +1069,6 @@ fhandler_fifo::raw_read (void *in_ptr, size_t& len)
 
   while (1)
     {
-      if (hit_eof ())
-	{
-	  len = 0;
-	  return;
-	}
-
       /* Poll the connected clients for input. */
       fifo_client_lock ();
       for (int i = 0; i < nhandlers; i++)
@@ -1137,17 +1099,16 @@ fhandler_fifo::raw_read (void *in_ptr, size_t& len)
 		/* Client has disconnected.  Mark the client handler
 		   to be deleted when it's safe to do that. */
 		fc_handler[i].state = fc_invalid;
-		nconnected--;
 		break;
 	      default:
 		debug_printf ("NtReadFile status %y", status);
 		__seterrno_from_nt_status (status);
 		fc_handler[i].state = fc_invalid;
-		nconnected--;
 		fifo_client_unlock ();
 		goto errout;
 	      }
 	  }
+      /* FIXME: Check for EOF. */
       fifo_client_unlock ();
       if (is_nonblocking ())
 	{
@@ -1361,7 +1322,7 @@ fhandler_fifo::dup (fhandler_base *child, int flags)
       fhf->fifo_client_unlock ();
 
       /* Clear handler list; the child never starts as owner. */
-      fhf->nhandlers = fhf->shandlers = fhf->nconnected = 0;
+      fhf->nhandlers = fhf->shandlers = 0;
       fhf->fc_handler = NULL;
 
       if (!DuplicateHandle (GetCurrentProcess (), shmem_handle,
@@ -1484,7 +1445,7 @@ fhandler_fifo::fixup_after_exec ()
       if (reopen_shared_fc_handler () < 0)
 	api_fatal ("Can't reopen shared fc_handler memory during exec, %E");
       fc_handler = NULL;
-      nhandlers = shandlers = nconnected = 0;
+      nhandlers = shandlers = 0;
 
       /* Cancel parent's reader thread */
       if (cancel_evt)
