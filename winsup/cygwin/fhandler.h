@@ -1290,6 +1290,7 @@ struct fifo_client_handler
 /* Returns FILE_PIPE_DISCONNECTED_STATE, FILE_PIPE_LISTENING_STATE,
    FILE_PIPE_CONNECTED_STATE, FILE_PIPE_CLOSING_STATE,
    FILE_PIPE_INPUT_AVAILABLE_STATE, or -1 on error. */
+  fifo_client_connect_state &get_state () { return state; }
   int pipe_state ();
 };
 
@@ -1408,7 +1409,7 @@ class fhandler_fifo: public fhandler_base
 public:
   fhandler_fifo ();
   int get_nhandlers () const { return nhandlers; }
-  HANDLE get_fc_handle (int i) const { return fc_handler[i].h; }
+  fifo_client_handler get_fc_handler (int i) const { return fc_handler[i]; }
   bool is_connected (int i) const
   { return fc_handler[i].state == fc_connected; }
   PUNICODE_STRING get_pipe_name ();

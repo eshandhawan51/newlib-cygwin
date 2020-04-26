@@ -876,22 +876,36 @@ peek_fifo (select_record *s, bool from_select)
 	}
 
       fh->fifo_client_lock ();
+      int nconnected = 0;
       for (int i = 0; i < fh->get_nhandlers (); i++)
 	if (fh->is_connected (i))
 	  {
-	    int n = pipe_data_available (s->fd, fh, fh->get_fc_handle (i),
-					 false);
-	    if (n > 0)
+	    nconnected++;
+	    switch (fh->get_fc_handler (i).pipe_state ())
 	      {
-		select_printf ("read: %s, ready for read: avail %d, client %d",
-			       fh->get_name (), n, i);
+	      case FILE_PIPE_DISCONNECTED_STATE:
+	      case FILE_PIPE_CLOSING_STATE:
+		fh->get_fc_handler (i).get_state () = fc_invalid;
+		nconnected--;
+		break;
+	      case FILE_PIPE_INPUT_AVAILABLE_STATE:
+		select_printf ("read: %s, ready for read", fh->get_name ());
 		fh->fifo_client_unlock ();
 		gotone += s->read_ready = true;
 		goto out;
+	      default:
+		break;
 	      }
 	  }
-      /* FIXME: Check for EOF. */
       fh->fifo_client_unlock ();
+      if (!nconnected)		/* EOF */
+	{
+	  select_printf ("read: %s, saw EOF", fh->get_name ());
+	  gotone += s->read_ready = true;
+	  if (s->except_selected)
+	    gotone += s->except_ready = true;
+	  goto out;
+	}
     }
 out:
   if (s->write_selected)

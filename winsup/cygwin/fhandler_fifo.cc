@@ -1070,6 +1070,7 @@ fhandler_fifo::raw_read (void *in_ptr, size_t& len)
   while (1)
     {
       /* Poll the connected clients for input. */
+      int nconnected = 0;
       fifo_client_lock ();
       for (int i = 0; i < nhandlers; i++)
 	if (fc_handler[i].state == fc_connected)
@@ -1078,7 +1079,8 @@ fhandler_fifo::raw_read (void *in_ptr, size_t& len)
 	    IO_STATUS_BLOCK io;
 	    size_t nbytes = 0;
 
-	    status = NtReadFile (get_fc_handle (i), NULL, NULL, NULL,
+	    nconnected++;
+	    status = NtReadFile (fc_handler[i].h, NULL, NULL, NULL,
 				 &io, in_ptr, len, NULL, NULL);
 	    switch (status)
 	      {
@@ -1099,17 +1101,23 @@ fhandler_fifo::raw_read (void *in_ptr, size_t& len)
 		/* Client has disconnected.  Mark the client handler
 		   to be deleted when it's safe to do that. */
 		fc_handler[i].state = fc_invalid;
+		nconnected--;
 		break;
 	      default:
 		debug_printf ("NtReadFile status %y", status);
 		__seterrno_from_nt_status (status);
 		fc_handler[i].state = fc_invalid;
+		nconnected--;
 		fifo_client_unlock ();
 		goto errout;
 	      }
 	  }
-      /* FIXME: Check for EOF. */
       fifo_client_unlock ();
+      if (!nconnected)		/* EOF */
+	{
+	  len = 0;
+	  return;
+	}
       if (is_nonblocking ())
 	{
 	  set_errno (EAGAIN);
