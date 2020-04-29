@@ -568,7 +568,7 @@ fhandler_fifo::thread_func ()
 		}
 	    }
 	  HANDLE ph = NULL;
-	  int ps = -1;
+	  NTSTATUS status1;
 
 	  fifo_client_lock ();
 	  switch (status)
@@ -585,37 +585,34 @@ fhandler_fifo::thread_func ()
 	    case STATUS_THREAD_IS_TERMINATING:
 	    case STATUS_WAIT_1:
 	    case STATUS_WAIT_2:
-	      /* Force NtFsControlFile to complete.  Otherwise the next
-		 writer to connect might not be recorded in the client
-		 handler list. */
-	      status = open_pipe (ph);
-	      if (NT_SUCCESS (status)
-		  && (NT_SUCCESS (io.Status) || io.Status == STATUS_PIPE_CONNECTED))
-		{
-		  debug_printf ("successfully connected bogus client");
-		  delete_client_handler (nhandlers - 1);
-		}
-	      else if ((ps = fc.pipe_state ()) == FILE_PIPE_CONNECTED_STATE
-		       || ps == FILE_PIPE_INPUT_AVAILABLE_STATE)
-		{
-		  /* A connection was made under our nose. */
-		  debug_printf ("recording connection before terminating");
-		  fc.state = fc_connected;
-		  set_pipe_non_blocking (fc.h, true);
-		}
+	      /* Make NtFsControlFile finish by connecting bogus client. */
+	      status1 = open_pipe (ph);
+	      WaitForSingleObject (conn_evt, INFINITE);
+	      if (NT_SUCCESS (status1))
+		/* Bogus cilent connected. */
+		delete_client_handler (nhandlers - 1);
 	      else
-		{
-		  debug_printf ("failed to terminate NtFsControlFile cleanly");
-		  delete_client_handler (nhandlers - 1);
-		}
-	      if (ph)
-		NtClose (ph);
+		/* Did a real client connect? */
+		switch (io.Status)
+		  {
+		  case STATUS_SUCCESS:
+		  case STATUS_PIPE_CONNECTED:
+		    fc.state = fc_connected;
+		    set_pipe_non_blocking (fc.h, true);
+		    break;
+		  default:
+		    debug_printf ("NtFsControlFile status %y after failing to connect bogus client or real client", io.Status);
+		    fc.state = fc_invalid;
+		    break;
+		  }
 	      break;
 	    default:
 	      debug_printf ("NtFsControlFile status %y", status);
 	      delete_client_handler (nhandlers - 1);
 	      break;		/* ?? */
 	    }
+	  if (ph)
+	    NtClose (ph);
 	  if (update && update_shared_handlers () < 0)
 	    api_fatal ("Can't update shared handlers, %E");
 	  if (check_w_r)
