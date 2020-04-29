@@ -582,6 +582,9 @@ fhandler_fifo::thread_func ()
 	    {
 	    case STATUS_SUCCESS:
 	    case STATUS_PIPE_CONNECTED:
+	      /* I've seen this a few times.  Tentatively assume
+		 there's a connection. */
+	    case STATUS_PIPE_CLOSING:
 	      record_connection (fc);
 	      ResetEvent (conn_evt);
 	      break;
