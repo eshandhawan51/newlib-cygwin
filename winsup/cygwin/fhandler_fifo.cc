@@ -341,13 +341,6 @@ fhandler_fifo::cleanup_handlers ()
     }
 }
 
-void
-fhandler_fifo::record_connection (fifo_client_handler& fc)
-{
-  fc.state = fc_connected;
-  set_pipe_non_blocking (fc.h, true);
-}
-
 /* Called from thread_func with owner_lock in place, also called from
    fixup_after_exec with shared handles useable as they are. */
 int
@@ -468,8 +461,8 @@ fhandler_fifo::thread_func ()
 {
   HANDLE conn_evt;
 
-  if (!(conn_evt = create_event ()))
-    goto canceled;
+  if (!(conn_evt = CreateEvent (NULL, false, false, NULL)))
+    api_fatal ("Can't create connection event, %E");
 
   while (1)
     {
@@ -585,9 +578,10 @@ fhandler_fifo::thread_func ()
 	      /* I've seen this a few times.  Tentatively assume
 		 there's a connection. */
 	    case STATUS_PIPE_CLOSING:
-	      record_connection (fc);
-	      ResetEvent (conn_evt);
-	      break;
+	      fc.state = fc_connected;
+	      set_pipe_non_blocking (fc.h, true);
+	      fifo_client_unlock ();
+	      continue;
 	    case STATUS_THREAD_IS_TERMINATING:
 	    case STATUS_WAIT_1:
 	    case STATUS_WAIT_2:
@@ -606,7 +600,8 @@ fhandler_fifo::thread_func ()
 		{
 		  /* A connection was made under our nose. */
 		  debug_printf ("recording connection before terminating");
-		  record_connection (fc);
+		  fc.state = fc_connected;
+		  set_pipe_non_blocking (fc.h, true);
 		}
 	      else
 		{

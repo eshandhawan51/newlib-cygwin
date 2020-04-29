@@ -1401,7 +1401,6 @@ class fhandler_fifo: public fhandler_base
   void delete_client_handler (int);
   void cleanup_handlers ();
   void cancel_reader_thread ();
-  void record_connection (fifo_client_handler&);
 
   int get_shared_nhandlers () { return shmem->get_shared_nhandlers (); }
   void set_shared_nhandlers (int n) { shmem->set_shared_nhandlers (n); }
