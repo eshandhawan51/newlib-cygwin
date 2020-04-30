@@ -236,10 +236,10 @@ out:
   return status;
 }
 
-/* Wait for a pipe instance to become available, then connect.  We're
-   specifying no timeout below, but we have to check for
-   STATUS_IO_TIMEOUT anyway.  This can happen if too many writers are
-   trying to connect at once. */
+/* If we can't connect immediately, wait for a pipe instance to become
+   available and retry.  We're specifying no timeout below, but we
+   have to check for STATUS_IO_TIMEOUT anyway.  This can happen if too
+   many writers are trying to connect at once. */
 NTSTATUS
 fhandler_fifo::wait_open_pipe (HANDLE& ph)
 {
@@ -250,8 +250,9 @@ fhandler_fifo::wait_open_pipe (HANDLE& ph)
   ULONG pwbuf_size;
   PFILE_PIPE_WAIT_FOR_BUFFER pwbuf;
 
-  status = npfs_handle (npfsh);
-  if (!NT_SUCCESS (status))
+  if (NT_SUCCESS (status = open_pipe (ph)))
+    return status;
+  if (!NT_SUCCESS (status = npfs_handle (npfsh)))
     return status;
   if (!(evt = create_event ()))
     api_fatal ("Can't create event, %E");
