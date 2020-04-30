@@ -514,8 +514,8 @@ fhandler_fifo::thread_func ()
 	    case WAIT_OBJECT_0 + 1:
 	      goto canceled;
 	    default:
-	      debug_printf ("WFMO failed, %E");
-	      continue;		/* Or should we cancel? or api_fatal? */
+	      api_fatal ("WFMO failed, %E");
+	      break;
 	    }
 	}
       else    /* I'm the owner. */
@@ -562,9 +562,8 @@ fhandler_fifo::thread_func ()
 		  update = true;
 		  break;
 		default:
-		  debug_printf ("WFMO failed, %E");
-		  delete_client_handler (nhandlers - 1);
-		  continue;	/* ?? */
+		  api_fatal ("WFMO failed, %E");
+		  break;
 		}
 	    }
 	  HANDLE ph = NULL;
@@ -607,9 +606,7 @@ fhandler_fifo::thread_func ()
 		  }
 	      break;
 	    default:
-	      debug_printf ("NtFsControlFile status %y", status);
-	      delete_client_handler (nhandlers - 1);
-	      break;		/* ?? */
+	      break;
 	    }
 	  if (ph)
 	    NtClose (ph);
