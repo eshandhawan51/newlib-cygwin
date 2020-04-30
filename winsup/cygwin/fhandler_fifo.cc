@@ -547,6 +547,8 @@ fhandler_fifo::thread_func ()
 		{
 		case WAIT_OBJECT_0:
 		  status = io.Status;
+		  debug_printf ("NtFsControlFile STATUS_PENDING, then %y",
+				status);
 		  break;
 		case WAIT_OBJECT_0 + 1:
 		  status = STATUS_WAIT_1;
@@ -566,6 +568,9 @@ fhandler_fifo::thread_func ()
 		  break;
 		}
 	    }
+	  else
+	    debug_printf ("NtFsControlFile status %y, no STATUS_PENDING",
+			  status);
 	  HANDLE ph = NULL;
 	  NTSTATUS status1;
 
