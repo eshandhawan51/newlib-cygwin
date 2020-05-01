@@ -1320,7 +1320,6 @@ class fifo_shmem_t
   LONG _nreaders;
   af_unix_spinlock_t _owner_lock, _reading_lock;
   fifo_reader_id_t _owner, _prev_owner, _pending_owner;
-  LONG _write_ready_checked;
 
   /* Info about shared memory block used for temporary storage of the
      owner's fc_handler list. */
@@ -1353,9 +1352,6 @@ public:
   bool shared_fc_handler_updated () const { return _sh_fc_handler_updated; }
   void shared_fc_handler_updated (bool val)
   { InterlockedExchange (&_sh_fc_handler_updated, val); }
-  bool write_ready_checked () const { return _write_ready_checked; }
-  void write_ready_checked (bool val)
-  { InterlockedExchange (&_write_ready_checked, val); }
 
   friend class fhandler_fifo;
 };
@@ -1370,7 +1366,6 @@ class fhandler_fifo: public fhandler_base
   HANDLE owner_needed_evt;     /* The owner is closing. */
   HANDLE owner_found_evt;      /* A new owner has taken over. */
   HANDLE update_needed_evt;    /* shared_fc_handler needs updating. */
-  HANDLE check_write_ready_evt;/* write_ready needs to be checked. */
 
   /* Handles to non-shared events needed for fifo_reader_threads. */
   HANDLE cancel_evt;           /* Signal thread to exit. */
@@ -1416,10 +1411,7 @@ class fhandler_fifo: public fhandler_base
   { return shmem->shared_fc_handler_updated (); }
   void shared_fc_handler_updated (bool val)
   { shmem->shared_fc_handler_updated (val); }
-  void check_write_ready ();
-  bool write_ready_checked () const { return shmem->write_ready_checked (); }
-  void write_ready_checked (bool val)
-  { shmem->write_ready_checked (val); }
+
 
   int create_shmem ();
   int reopen_shmem ();

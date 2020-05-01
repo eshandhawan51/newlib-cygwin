@@ -85,7 +85,7 @@ static NO_COPY fifo_reader_id_t null_fr_id = { .winpid = 0, .fh = NULL };
 
 fhandler_fifo::fhandler_fifo ():
   fhandler_base (), read_ready (NULL), write_ready (NULL),
-  owner_needed_evt (NULL), owner_found_evt (NULL), update_needed_evt (NULL), check_write_ready_evt (NULL),
+  owner_needed_evt (NULL), owner_found_evt (NULL), update_needed_evt (NULL),
   cancel_evt (NULL), sync_thr (NULL),
   fc_handler (NULL),
   shandlers (0), nhandlers (0),
@@ -422,30 +422,6 @@ fhandler_fifo::update_my_handlers (bool from_exec)
   return 0;
 }
 
-void
-fhandler_fifo::check_write_ready ()
-{
-
-  int nconnected = 0;
-
-  for (int i = 0; i < nhandlers; i++)
-    if (fc_handler[i].state == fc_connected)
-      switch (fc_handler[i].pipe_state ())
-	{
-	case FILE_PIPE_CONNECTED_STATE:
-	case FILE_PIPE_INPUT_AVAILABLE_STATE:
-	  nconnected++;
-	  break;
-	default:
-	  break;
-	}
-  if (nconnected)
-    SetEvent (write_ready);
-  else
-    ResetEvent (write_ready);
-  write_ready_checked (true);
-}
-
 int
 fhandler_fifo::update_shared_handlers ()
 {
@@ -548,15 +524,15 @@ fhandler_fifo::thread_func ()
 	  owner_unlock ();
 	  NTSTATUS status;
 	  IO_STATUS_BLOCK io;
-	  bool cancel = false, update = false, check_w_r = false;
+	  bool cancel = false;
+	  bool update = false;
 
 	  status = NtFsControlFile (fc.h, conn_evt, NULL, NULL, &io,
 				    FSCTL_PIPE_LISTEN, NULL, 0, NULL, 0);
 	  if (status == STATUS_PENDING)
 	    {
-	      HANDLE w[4] = { conn_evt, update_needed_evt,
-		check_write_ready_evt, cancel_evt };
-	      switch (WaitForMultipleObjects (4, w, false, INFINITE))
+	      HANDLE w[3] = { conn_evt, update_needed_evt, cancel_evt };
+	      switch (WaitForMultipleObjects (3, w, false, INFINITE))
 		{
 		case WAIT_OBJECT_0:
 		  status = io.Status;
@@ -568,10 +544,6 @@ fhandler_fifo::thread_func ()
 		  update = true;
 		  break;
 		case WAIT_OBJECT_0 + 2:
-		  status = STATUS_WAIT_2;
-		  check_w_r = true;
-		  break;
-		case WAIT_OBJECT_0 + 3:
 		  status = STATUS_THREAD_IS_TERMINATING;
 		  cancel = true;
 		  update = true;
@@ -601,7 +573,6 @@ fhandler_fifo::thread_func ()
 	      continue;
 	    case STATUS_THREAD_IS_TERMINATING:
 	    case STATUS_WAIT_1:
-	    case STATUS_WAIT_2:
 	      /* Make NtFsControlFile finish by connecting bogus client. */
 	      status1 = open_pipe (ph);
 	      WaitForSingleObject (conn_evt, INFINITE);
@@ -628,11 +599,9 @@ fhandler_fifo::thread_func ()
 	    }
 	  if (ph)
 	    NtClose (ph);
+	  fifo_client_unlock ();
 	  if (update && update_shared_handlers () < 0)
 	    api_fatal ("Can't update shared handlers, %E");
-	  if (check_w_r)
-	    check_write_ready ();
-	  fifo_client_unlock ();
 	  if (cancel)
 	    goto canceled;
 	}
@@ -803,8 +772,6 @@ fhandler_fifo::remap_shared_fc_handler (size_t nbytes)
 int
 fhandler_fifo::open (int flags, mode_t)
 {
-  int saved_errno = 0;
-
   if (flags & O_PATH)
     return open_fs (flags);
 
@@ -857,22 +824,13 @@ fhandler_fifo::open (int flags, mode_t)
      and start the fifo_reader_thread. */
   if (reader)
     {
-      bool first = true;
       if (create_shmem () < 0)
 	goto err_close_write_ready;
       if (create_shared_fc_handler () < 0)
 	goto err_close_shmem;
-      /* Shared memory is initialized to 0, but some variables should be 1. */
+      /* Reinitialize _sh_fc_handler_updated, which starts as 0. */
       if (inc_nreaders () == 1)
-	{
-	  shared_fc_handler_updated (true);
-	  write_ready_checked (true);
-	}
-      else
-	{
-	  first = false;
-	  write_ready_checked (false);
-	}
+	shared_fc_handler_updated (true);
       SetEvent (read_ready);
       __small_sprintf (npbuf, "own-n-event.%08x.%016X", get_dev (), get_ino ());
       if (!(owner_needed_evt = CreateEvent (sa_buf, true, false, npbuf)))
@@ -895,16 +853,9 @@ fhandler_fifo::open (int flags, mode_t)
 	  __seterrno ();
 	  goto err_close_owner_found_evt;
 	}
-      __small_sprintf (npbuf, "ch-wr-event.%08x.%016X", get_dev (), get_ino ());
-      if (!(check_write_ready_evt = CreateEvent (sa_buf, false, false, npbuf)))
-	{
-	  debug_printf ("CreateEvent for %s failed, %E", npbuf);
-	  __seterrno ();
-	  goto err_close_update_needed_evt;
-	}
       /* Make cancel and sync inheritable for exec. */
       if (!(cancel_evt = create_event (true)))
-	goto err_close_check_write_ready_evt;
+	goto err_close_update_needed_evt;
       if (!(sync_thr = create_event (true)))
 	goto err_close_cancel_evt;
       me.winpid = GetCurrentProcessId ();
@@ -925,22 +876,13 @@ fhandler_fifo::open (int flags, mode_t)
 	  else
 	    {
 	      __seterrno_from_nt_status (status);
-	      goto err_close_fifo;
+	      goto err_cancel_frt;
 	    }
 	}
 
       /* Not a duplexer; wait for a writer to connect. */
-      else
-	{
-	  if (!first)
-	    {
-	      SetEvent (check_write_ready_evt);
-	      while (!write_ready_checked ())
-		yield ();
-	    }
-	  if (!wait (write_ready))
-	    goto err_close_fifo;
-	}
+      else if (!wait (write_ready))
+	goto err_cancel_frt;
 
       /* Make sure there's an owner. */
       owner_lock ();
@@ -977,16 +919,12 @@ fhandler_fifo::open (int flags, mode_t)
     }
 success:
   return 1;
-err_close_fifo:
-  /* Need to cancel fifo_reader_thread, maybe transfer ownership,.... */
-  saved_errno = get_errno ();
-  close ();
-  set_errno (saved_errno);
-  return 0;
+err_cancel_frt:
+  cancel_reader_thread ();
+/* err_close_sync_thr: */
+  NtClose (sync_thr);
 err_close_cancel_evt:
   NtClose (cancel_evt);
-err_close_check_write_ready_evt:
-  NtClose (check_write_ready_evt);
 err_close_update_needed_evt:
   NtClose (update_needed_evt);
 err_close_owner_found_evt:
@@ -1387,8 +1325,6 @@ fhandler_fifo::close ()
 	NtClose (owner_found_evt);
       if (update_needed_evt)
 	NtClose (update_needed_evt);
-      if (check_write_ready_evt)
-	NtClose (check_write_ready_evt);
       if (cancel_evt)
 	NtClose (cancel_evt);
       if (sync_thr)
@@ -1500,15 +1436,8 @@ fhandler_fifo::dup (fhandler_base *child, int flags)
 	  __seterrno ();
 	  goto err_close_owner_found_evt;
 	}
-      if (!DuplicateHandle (GetCurrentProcess (), check_write_ready_evt,
-			    GetCurrentProcess (), &fhf->check_write_ready_evt,
-			    0, !(flags & O_CLOEXEC), DUPLICATE_SAME_ACCESS))
-	{
-	  __seterrno ();
-	  goto err_close_update_needed_evt;
-	}
       if (!(fhf->cancel_evt = create_event (true)))
-	goto err_close_check_write_ready_evt;
+	goto err_close_update_needed_evt;
       if (!(fhf->sync_thr = create_event (true)))
 	goto err_close_cancel_evt;
       inc_nreaders ();
@@ -1518,8 +1447,6 @@ fhandler_fifo::dup (fhandler_base *child, int flags)
   return 0;
 err_close_cancel_evt:
   NtClose (fhf->cancel_evt);
-err_close_check_write_ready_evt:
-  NtClose (fhf->check_write_ready_evt);
 err_close_update_needed_evt:
   NtClose (fhf->update_needed_evt);
 err_close_owner_found_evt:
@@ -1563,7 +1490,6 @@ fhandler_fifo::fixup_after_fork (HANDLE parent)
       fork_fixup (parent, owner_needed_evt, "owner_needed_evt");
       fork_fixup (parent, owner_found_evt, "owner_found_evt");
       fork_fixup (parent, update_needed_evt, "update_needed_evt");
-      fork_fixup (parent, check_write_ready_evt, "check_write_ready_evt");
       if (close_on_exec ())
 	/* Prevent a later attempt to close the non-inherited
 	   pipe-instance handles copied from the parent. */
@@ -1647,7 +1573,6 @@ fhandler_fifo::set_close_on_exec (bool val)
       set_no_inheritance (owner_needed_evt, val);
       set_no_inheritance (owner_found_evt, val);
       set_no_inheritance (update_needed_evt, val);
-      set_no_inheritance (check_write_ready_evt, val);
       set_no_inheritance (cancel_evt, val);
       set_no_inheritance (sync_thr, val);
       fifo_client_lock ();
