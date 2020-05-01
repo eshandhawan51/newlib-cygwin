@@ -891,16 +891,16 @@ peek_fifo (select_record *s, bool from_select)
 		break;
 	      }
 	  }
+      fh->maybe_eof (!nconnected);
       fh->fifo_client_unlock ();
-      fh->reading_unlock ();
-      if (!nconnected)		/* EOF */
+      if (fh->maybe_eof () && fh->hit_eof ())
 	{
 	  select_printf ("read: %s, saw EOF", fh->get_name ());
 	  gotone += s->read_ready = true;
 	  if (s->except_selected)
 	    gotone += s->except_ready = true;
-	  goto out;
 	}
+      fh->reading_unlock ();
     }
 out:
   if (s->write_selected)

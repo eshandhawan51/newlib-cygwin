@@ -84,11 +84,11 @@ STATUS_PIPE_EMPTY simply means there's no data to be read. */
 static NO_COPY fifo_reader_id_t null_fr_id = { .winpid = 0, .fh = NULL };
 
 fhandler_fifo::fhandler_fifo ():
-  fhandler_base (), read_ready (NULL), write_ready (NULL),
+  fhandler_base (), read_ready (NULL), write_ready (NULL), writer_opening (NULL),
   owner_needed_evt (NULL), owner_found_evt (NULL), update_needed_evt (NULL),
   cancel_evt (NULL), sync_thr (NULL),
   fc_handler (NULL),
-  shandlers (0), nhandlers (0),
+  shandlers (0), nhandlers (0), _maybe_eof (false),
   reader (false), writer (false), duplexer (false),
   max_atomic_write (DEFAULT_PIPEBUFSIZE),
   me (null_fr_id), shmem_handle (NULL), shmem (NULL),
@@ -438,6 +438,15 @@ fhandler_fifo::update_shared_handlers ()
   return 0;
 }
 
+void
+fhandler_fifo::record_connection (fifo_client_handler& fc)
+{
+  maybe_eof (false);
+  fc.state = fc_connected;
+  set_pipe_non_blocking (fc.h, true);
+  ResetEvent (writer_opening);
+}
+
 static DWORD WINAPI
 fifo_reader_thread (LPVOID param)
 {
@@ -567,8 +576,7 @@ fhandler_fifo::thread_func ()
 	      /* I've seen this a few times.  Tentatively assume
 		 there's a connection. */
 	    case STATUS_PIPE_CLOSING:
-	      fc.state = fc_connected;
-	      set_pipe_non_blocking (fc.h, true);
+	      record_connection (fc);
 	      fifo_client_unlock ();
 	      continue;
 	    case STATUS_THREAD_IS_TERMINATING:
@@ -585,8 +593,7 @@ fhandler_fifo::thread_func ()
 		  {
 		  case STATUS_SUCCESS:
 		  case STATUS_PIPE_CONNECTED:
-		    fc.state = fc_connected;
-		    set_pipe_non_blocking (fc.h, true);
+		    record_connection (fc);
 		    break;
 		  default:
 		    debug_printf ("NtFsControlFile status %y after failing to connect bogus client or real client", io.Status);
@@ -813,25 +820,32 @@ fhandler_fifo::open (int flags, mode_t)
       goto err;
     }
   npbuf[0] = 'w';
-  if (!(write_ready = CreateEvent (sa_buf, true, false, npbuf)))
+  if (!(write_ready = CreateEvent (sa_buf, false, false, npbuf)))
     {
       debug_printf ("CreateEvent for %s failed, %E", npbuf);
       __seterrno ();
       goto err_close_read_ready;
+    }
+  __small_sprintf (npbuf, "w-o-event.%08x.%016X", get_dev (), get_ino ());
+  if (!(writer_opening = CreateEvent (sa_buf, true, false, npbuf)))
+    {
+      debug_printf ("CreateEvent for %s failed, %E", npbuf);
+      __seterrno ();
+      goto err_close_write_ready;
     }
 
   /* If we're reading, signal read_ready, create the shared memory,
      and start the fifo_reader_thread. */
   if (reader)
     {
+      SetEvent (read_ready);
       if (create_shmem () < 0)
-	goto err_close_write_ready;
+	goto err_close_writer_opening;
       if (create_shared_fc_handler () < 0)
 	goto err_close_shmem;
       /* Reinitialize _sh_fc_handler_updated, which starts as 0. */
       if (inc_nreaders () == 1)
 	shared_fc_handler_updated (true);
-      SetEvent (read_ready);
       __small_sprintf (npbuf, "own-n-event.%08x.%016X", get_dev (), get_ino ());
       if (!(owner_needed_evt = CreateEvent (sa_buf, true, false, npbuf)))
 	{
@@ -902,7 +916,8 @@ fhandler_fifo::open (int flags, mode_t)
   if (writer)
     {
       if (!wait (read_ready))
-	goto err_close_write_ready;
+	goto err_close_writer_opening;
+      SetEvent (writer_opening);
       NTSTATUS status = wait_open_pipe (get_handle ());
       if (NT_SUCCESS (status))
 	{
@@ -914,7 +929,8 @@ fhandler_fifo::open (int flags, mode_t)
 	{
 	  debug_printf ("create of writer failed");
 	  __seterrno_from_nt_status (status);
-	  goto err_close_write_ready;
+	  ResetEvent (writer_opening);
+	  goto err_close_writer_opening;
 	}
     }
 success:
@@ -940,6 +956,8 @@ err_dec_nreaders:
 err_close_shmem:
   NtUnmapViewOfSection (NtCurrentProcess (), shmem);
   NtClose (shmem_handle);
+err_close_writer_opening:
+  NtClose (writer_opening);
 err_close_write_ready:
   NtClose (write_ready);
 err_close_read_ready:
@@ -1117,6 +1135,24 @@ fhandler_fifo::take_ownership ()
   WaitForSingleObject (owner_found_evt, INFINITE);
 }
 
+/* A reader is at EOF if the pipe is empty and no writers are open.
+   hit_eof is called by raw_read and select.cc:peek_fifo if it appears
+   that we are at EOF after polling the fc_handlers.  We recheck this
+   in case a writer opened while we were polling.  */
+bool
+fhandler_fifo::hit_eof ()
+{
+  bool ret = maybe_eof () && !IsEventSignalled (writer_opening);
+  if (ret)
+    {
+      yield ();
+      fifo_client_lock ();
+      fifo_client_unlock ();
+      ret = maybe_eof ();
+    }
+  return ret;
+}
+
 void __reg3
 fhandler_fifo::raw_read (void *in_ptr, size_t& len)
 {
@@ -1173,13 +1209,15 @@ fhandler_fifo::raw_read (void *in_ptr, size_t& len)
 		goto errout;
 	      }
 	  }
+      maybe_eof (!nconnected && !IsEventSignalled (writer_opening));
       fifo_client_unlock ();
-      reading_unlock ();
-      if (!nconnected)		/* EOF */
+      if (maybe_eof () && hit_eof ())
 	{
+	  reading_unlock ();
 	  len = 0;
 	  return;
 	}
+      reading_unlock ();
       if (is_nonblocking ())
 	{
 	  set_errno (EAGAIN);
@@ -1342,6 +1380,8 @@ fhandler_fifo::close ()
     NtClose (read_ready);
   if (write_ready)
     NtClose (write_ready);
+  if (writer_opening)
+    NtClose (writer_opening);
   return fhandler_base::close ();
 }
 
@@ -1388,6 +1428,13 @@ fhandler_fifo::dup (fhandler_base *child, int flags)
       __seterrno ();
       goto err_close_read_ready;
     }
+  if (!DuplicateHandle (GetCurrentProcess (), writer_opening,
+			GetCurrentProcess (), &fhf->writer_opening,
+			0, !(flags & O_CLOEXEC), DUPLICATE_SAME_ACCESS))
+    {
+      __seterrno ();
+      goto err_close_write_ready;
+    }
   if (reader)
     {
       /* Make sure the child starts unlocked. */
@@ -1402,7 +1449,7 @@ fhandler_fifo::dup (fhandler_base *child, int flags)
 			    0, !(flags & O_CLOEXEC), DUPLICATE_SAME_ACCESS))
 	{
 	  __seterrno ();
-	  goto err_close_write_ready;
+	  goto err_close_writer_opening;
 	}
       if (fhf->reopen_shmem () < 0)
 	goto err_close_shmem_handle;
@@ -1461,6 +1508,8 @@ err_close_shmem:
   NtUnmapViewOfSection (GetCurrentProcess (), fhf->shmem);
 err_close_shmem_handle:
   NtClose (fhf->shmem_handle);
+err_close_writer_opening:
+  NtClose (writer_opening);
 err_close_write_ready:
   NtClose (fhf->write_ready);
 err_close_read_ready:
@@ -1475,6 +1524,7 @@ fhandler_fifo::fixup_after_fork (HANDLE parent)
   fhandler_base::fixup_after_fork (parent);
   fork_fixup (parent, read_ready, "read_ready");
   fork_fixup (parent, write_ready, "write_ready");
+  fork_fixup (parent, writer_opening, "writer_opening");
   if (reader)
     {
       /* Make sure the child starts unlocked. */
@@ -1568,6 +1618,7 @@ fhandler_fifo::set_close_on_exec (bool val)
   fhandler_base::set_close_on_exec (val);
   set_no_inheritance (read_ready, val);
   set_no_inheritance (write_ready, val);
+  set_no_inheritance (writer_opening, val);
   if (reader)
     {
       set_no_inheritance (owner_needed_evt, val);

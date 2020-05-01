@@ -1361,6 +1361,7 @@ class fhandler_fifo: public fhandler_base
   /* Handles to named events shared by all fhandlers for a given FIFO. */
   HANDLE read_ready;           /* A reader is open; OK for a writer to open. */
   HANDLE write_ready;          /* A writer is open; OK for a reader to open. */
+  HANDLE writer_opening;       /* A writer is opening; no EOF. */
 
   /* Handles to named events needed by all readers of a given FIFO. */
   HANDLE owner_needed_evt;     /* The owner is closing. */
@@ -1376,6 +1377,7 @@ class fhandler_fifo: public fhandler_base
   fifo_client_handler *fc_handler;        /* Dynamically growing array. */
   int shandlers;                          /* Size of fc_handler array. */
   int nhandlers;
+  bool _maybe_eof;
   af_unix_spinlock_t _fifo_client_lock;
   bool reader, writer, duplexer;
   size_t max_atomic_write;
@@ -1395,6 +1397,7 @@ class fhandler_fifo: public fhandler_base
   int add_client_handler (bool new_pipe_instance = true);
   void delete_client_handler (int);
   void cleanup_handlers ();
+  void record_connection (fifo_client_handler&);
   void cancel_reader_thread ();
 
   int get_shared_nhandlers () { return shmem->get_shared_nhandlers (); }
@@ -1421,6 +1424,9 @@ class fhandler_fifo: public fhandler_base
 
 public:
   fhandler_fifo ();
+  bool hit_eof ();
+  bool maybe_eof () const { return _maybe_eof; }
+  void maybe_eof (bool val) { _maybe_eof = val; }
   int get_nhandlers () const { return nhandlers; }
   fifo_client_handler get_fc_handler (int i) const { return fc_handler[i]; }
   bool is_connected (int i) const
