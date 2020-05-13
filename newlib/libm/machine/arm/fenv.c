@@ -49,7 +49,9 @@
  * Hopefully the system ID byte is immutable, so it's valid to use
  * this as a default environment.
  */
-const fenv_t _fe_dfl_env = 0;
+fenv_t __fe_dfl_env = { 0 };
+
+const fenv_t *_fe_dfl_env = &__fe_dfl_env;
 #endif
 
 

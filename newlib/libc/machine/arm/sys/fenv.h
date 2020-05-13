@@ -33,6 +33,10 @@
 
 #include <sys/_types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifndef	__fenv_static
 #define	__fenv_static	static
 #endif
@@ -76,12 +80,12 @@ typedef int fexcept_t;
 #endif
 #define	_ROUND_MASK	(FE_TONEAREST | FE_DOWNWARD | \
 			 FE_UPWARD | FE_TOWARDZERO)
-__BEGIN_DECLS
+
 
 /* Default floating-point environment */
 
-extern const fenv_t	_fe_dfl_env;
-#define	FE_DFL_ENV	(&_fe_dfl_env)
+extern const fenv_t	*_fe_dfl_env;
+#define	FE_DFL_ENV	(_fe_dfl_env)
 
 /* We need to be able to map status flag positions to mask flag positions */
 #ifndef __ARM_PCS_VFP
@@ -269,6 +273,8 @@ fegetexcept(void)
 
 #endif	/* __ARM_PCS_VFP */
 
-__END_DECLS
+#ifdef __cplusplus
+}
+#endif
 
 #endif	/* _SYS_FENV_H_ */ 
