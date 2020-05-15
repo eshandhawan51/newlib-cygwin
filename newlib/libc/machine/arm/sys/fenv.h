@@ -29,9 +29,10 @@
  */
 
 #ifndef _SYS_FENV_H_
-#define _SYS_FENV_H_
+#define _SYS_FENV_H_ 1
 
 #include <sys/_types.h>
+#include <sys/cdefs.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -94,8 +95,6 @@ extern const fenv_t	*_fe_dfl_env;
 #endif
 
 #ifndef __ARM_PCS_VFP
-
-
 
 int feclearexcept(int excepts);
 int fegetexceptflag(fexcept_t *flagp, int excepts);
