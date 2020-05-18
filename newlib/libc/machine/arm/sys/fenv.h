@@ -39,7 +39,7 @@ extern "C" {
 #endif
 
 #ifndef	__fenv_static
-#define	__fenv_static	static
+#define	__fenv_static static
 #endif
 
 typedef int fenv_t;
@@ -115,13 +115,16 @@ int fegetexcept(void);
 
 #else	/* __ARM_PCS_VFP */
 
+#ifndef __thumb__
+
 #define	vmrs_fpscr(__r)	__asm __volatile("vmrs %0, fpscr" : "=&r"(__r))
 #define	vmsr_fpscr(__r)	__asm __volatile("vmsr fpscr, %0" : : "r"(__r))
 
+#endif 
+
 #define _FPU_MASK_SHIFT	8
 
-__fenv_static inline int
-feclearexcept(int excepts)
+__fenv_static inline int feclearexcept(int excepts)
 {
 	fexcept_t __fpsr;
 
