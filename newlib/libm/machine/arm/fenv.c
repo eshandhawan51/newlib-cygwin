@@ -74,7 +74,11 @@ const fenv_t *_fe_dfl_env = &__fe_dfl_env;
 
 #include <machine/fenv-softfloat.h>
 
-#endif
+#else /* __ARM_PCS_VFP PRESENT */
+
+#include <machine/fenv-vfp.h>
+
+#endif /* __ARM_PCS_VFP */
 
 #ifdef __GNUC_GNU_INLINE__
 #error "This file must be compiled with C99 'inline' semantics"
