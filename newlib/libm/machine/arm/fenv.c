@@ -44,17 +44,6 @@
 #endif
 
 
-#ifndef FENV_MANGLE
-/*
- * Hopefully the system ID byte is immutable, so it's valid to use
- * this as a default environment.
- */
-fenv_t __fe_dfl_env = { 0 };
-
-const fenv_t *_fe_dfl_env = &__fe_dfl_env;
-#endif
-
-
 /* If this is a non-mangled softfp version special processing is required */
 #if defined(FENV_MANGLE) || !defined(SOFTFP_ABI) || !defined(FENV_ARMv6)
 

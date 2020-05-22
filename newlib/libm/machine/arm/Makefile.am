@@ -21,6 +21,7 @@ LIB_SOURCES = \
 	sf_round.c \
 	sf_trunc.c \
 	feclearexcept.c \
+	fe_dfl_env.c\
 	fegetenv.c \
 	fegetexceptflag.c \
 	fegetround.c \

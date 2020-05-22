@@ -76,13 +76,14 @@ am__objects_1 = lib_a-e_sqrt.$(OBJEXT) lib_a-ef_sqrt.$(OBJEXT) \
 	lib_a-sf_ceil.$(OBJEXT) lib_a-sf_floor.$(OBJEXT) \
 	lib_a-sf_nearbyint.$(OBJEXT) lib_a-sf_rint.$(OBJEXT) \
 	lib_a-sf_round.$(OBJEXT) lib_a-sf_trunc.$(OBJEXT) \
-	lib_a-feclearexcept.$(OBJEXT) lib_a-fegetenv.$(OBJEXT) \
-	lib_a-fegetexceptflag.$(OBJEXT) lib_a-fegetround.$(OBJEXT) \
-	lib_a-feholdexcept.$(OBJEXT) lib_a-fenv.$(OBJEXT) \
-	lib_a-feraiseexcept.$(OBJEXT) lib_a-fesetenv.$(OBJEXT) \
-	lib_a-fesetexceptflag.$(OBJEXT) lib_a-fesetround.$(OBJEXT) \
-	lib_a-fetestexcept.$(OBJEXT) lib_a-feupdateenv.$(OBJEXT) \
-	lib_a-fenv-vfp.$(OBJEXT) lib_a-fenv-softfp.$(OBJEXT)
+	lib_a-feclearexcept.$(OBJEXT) lib_a-fe_dfl_env.$(OBJEXT) \
+	lib_a-fegetenv.$(OBJEXT) lib_a-fegetexceptflag.$(OBJEXT) \
+	lib_a-fegetround.$(OBJEXT) lib_a-feholdexcept.$(OBJEXT) \
+	lib_a-fenv.$(OBJEXT) lib_a-feraiseexcept.$(OBJEXT) \
+	lib_a-fesetenv.$(OBJEXT) lib_a-fesetexceptflag.$(OBJEXT) \
+	lib_a-fesetround.$(OBJEXT) lib_a-fetestexcept.$(OBJEXT) \
+	lib_a-feupdateenv.$(OBJEXT) lib_a-fenv-vfp.$(OBJEXT) \
+	lib_a-fenv-softfp.$(OBJEXT)
 am_lib_a_OBJECTS = $(am__objects_1)
 lib_a_OBJECTS = $(am_lib_a_OBJECTS)
 DEFAULT_INCLUDES = -I.@am__isrc@
@@ -226,6 +227,7 @@ LIB_SOURCES = \
 	sf_round.c \
 	sf_trunc.c \
 	feclearexcept.c \
+	fe_dfl_env.c\
 	fegetenv.c \
 	fegetexceptflag.c \
 	fegetround.c \
@@ -405,6 +407,12 @@ lib_a-feclearexcept.o: feclearexcept.c
 
 lib_a-feclearexcept.obj: feclearexcept.c
 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-feclearexcept.obj `if test -f 'feclearexcept.c'; then $(CYGPATH_W) 'feclearexcept.c'; else $(CYGPATH_W) '$(srcdir)/feclearexcept.c'; fi`
+
+lib_a-fe_dfl_env.o: fe_dfl_env.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fe_dfl_env.o `test -f 'fe_dfl_env.c' || echo '$(srcdir)/'`fe_dfl_env.c
+
+lib_a-fe_dfl_env.obj: fe_dfl_env.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fe_dfl_env.obj `if test -f 'fe_dfl_env.c'; then $(CYGPATH_W) 'fe_dfl_env.c'; else $(CYGPATH_W) '$(srcdir)/fe_dfl_env.c'; fi`
 
 lib_a-fegetenv.o: fegetenv.c
 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fegetenv.o `test -f 'fegetenv.c' || echo '$(srcdir)/'`fegetenv.c
