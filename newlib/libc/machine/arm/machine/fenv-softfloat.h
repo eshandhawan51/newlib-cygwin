@@ -55,9 +55,9 @@
  * doesn't matter how you define them.
  */
 
-extern int __softfloat_float_exception_flags;
-extern int __softfloat_float_exception_mask;
-extern int __softfloat_float_rounding_mode;
+int __softfloat_float_exception_flags;
+int __softfloat_float_exception_mask;
+int __softfloat_float_rounding_mode;
 void __softfloat_float_raise(int);
 
 __fenv_static inline int
