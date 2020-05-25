@@ -54,11 +54,12 @@
  * define fenv_t and fexcept_t to match the hardware ABI.  Otherwise, it
  * doesn't matter how you define them.
  */
+#include <errno.h>
 
 int __softfloat_float_exception_flags;
 int __softfloat_float_exception_mask;
 int __softfloat_float_rounding_mode;
-void __softfloat_float_raise(int);
+/*void __softfloat_float_raise(int);*/
 
 __fenv_static inline int
 feclearexcept(int excepts)
@@ -88,9 +89,11 @@ fesetexceptflag(const fexcept_t *flagp, int excepts)
 __fenv_static inline int
 feraiseexcept(int excepts)
 {
-
+/*
 	__softfloat_float_raise(excepts);
 	return (0);
+	*/
+	return (excepts  ?  -ENOTSUP : 0);
 }
 
 __fenv_static inline int
