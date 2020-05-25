@@ -102,7 +102,7 @@ extern inline int fegetexcept(void);
 #else /* !FENV_MANGLE && SOFTFP_ABI */
 /* Set by libc when the VFP unit is enabled */
 
-extern int _libc_arm_fpu_present;
+int _libc_arm_fpu_present;
 
 int __softfp_feclearexcept(int excepts);
 int __softfp_fegetexceptflag(fexcept_t *flagp, int excepts);
