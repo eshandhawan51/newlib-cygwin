@@ -37,14 +37,14 @@
 
 
 
-extern inline int feclearexcept(int __excepts);
-extern inline int fegetexceptflag(fexcept_t *__flagp, int __excepts);
-extern inline int fesetexceptflag(const fexcept_t *__flagp, int __excepts);
-extern inline int feraiseexcept(int __excepts);
-extern inline int fetestexcept(int __excepts);
+extern inline int feclearexcept(int excepts);
+extern inline int fegetexceptflag(fexcept_t *flagp, int excepts);
+extern inline int fesetexceptflag(const fexcept_t *flagp, int excepts);
+extern inline int feraiseexcept(int excepts);
+extern inline int fetestexcept(int excepts);
 extern inline int fegetround(void);
-extern inline int fesetround(int __round);
-extern inline int fegetenv(fenv_t *__envp);
-extern inline int feholdexcept(fenv_t *__envp);
-extern inline int fesetenv(const fenv_t *__envp);
-extern inline int feupdateenv(const fenv_t *__envp);
+extern inline int fesetround(int rounding_mode);
+extern inline int fegetenv(fenv_t *envp);
+extern inline int feholdexcept(fenv_t *envp);
+extern inline int fesetenv(const fenv_t *envp);
+extern inline int feupdateenv(const fenv_t *envp);

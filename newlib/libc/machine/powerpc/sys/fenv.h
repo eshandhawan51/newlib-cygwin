@@ -124,62 +124,62 @@ union __fpscr {
 };
 
 __fenv_static inline int
-feclearexcept(int __excepts)
+feclearexcept(int excepts)
 {
 	union __fpscr __r;
 
-	if (__excepts & FE_INVALID)
-		__excepts |= FE_ALL_INVALID;
+	if (excepts & FE_INVALID)
+		excepts |= FE_ALL_INVALID;
 	__mffs(&__r);
-	__r.__bits.__reg &= ~__excepts;
+	__r.__bits.__reg &= ~excepts;
 	__mtfsf(__r);
 	return (0);
 }
 
 __fenv_static inline int
-fegetexceptflag(fexcept_t *__flagp, int __excepts)
+fegetexceptflag(fexcept_t *flagp, int excepts)
 {
 	union __fpscr __r;
 
 	__mffs(&__r);
-	*__flagp = __r.__bits.__reg & __excepts;
+	*flagp = __r.__bits.__reg & excepts;
 	return (0);
 }
 
 __fenv_static inline int
-fesetexceptflag(const fexcept_t *__flagp, int __excepts)
+fesetexceptflag(const fexcept_t *flagp, int excepts)
 {
 	union __fpscr __r;
 
-	if (__excepts & FE_INVALID)
-		__excepts |= FE_ALL_EXCEPT;
+	if (excepts & FE_INVALID)
+		excepts |= FE_ALL_EXCEPT;
 	__mffs(&__r);
-	__r.__bits.__reg &= ~__excepts;
-	__r.__bits.__reg |= *__flagp & __excepts;
+	__r.__bits.__reg &= ~excepts;
+	__r.__bits.__reg |= *flagp & excepts;
 	__mtfsf(__r);
 	return (0);
 }
 
 __fenv_static inline int
-feraiseexcept(int __excepts)
+feraiseexcept(int excepts)
 {
 	union __fpscr __r;
 
-	if (__excepts & FE_INVALID)
-		__excepts |= FE_VXSOFT;
+	if (excepts & FE_INVALID)
+		excepts |= FE_VXSOFT;
 	__mffs(&__r);
-	__r.__bits.__reg |= __excepts;
+	__r.__bits.__reg |= excepts;
 	__mtfsf(__r);
 	return (0);
 }
 
 __fenv_static inline int
-fetestexcept(int __excepts)
+fetestexcept(int excepts)
 {
 	union __fpscr __r;
 
 	__mffs(&__r);
-	return (__r.__bits.__reg & __excepts);
+	return (__r.__bits.__reg & excepts);
 }
 
 __fenv_static inline int
@@ -192,59 +192,59 @@ fegetround(void)
 }
 
 __fenv_static inline int
-fesetround(int __round)
+fesetround(int rounding_mode)
 {
 	union __fpscr __r;
 
-	if (__round & ~_ROUND_MASK)
+	if (rounding_mode & ~_ROUND_MASK)
 		return (-1);
 	__mffs(&__r);
 	__r.__bits.__reg &= ~_ROUND_MASK;
-	__r.__bits.__reg |= __round;
+	__r.__bits.__reg |= rounding_mode;
 	__mtfsf(__r);
 	return (0);
 }
 
 __fenv_static inline int
-fegetenv(fenv_t *__envp)
+fegetenv(fenv_t *envp)
 {
 	union __fpscr __r;
 
 	__mffs(&__r);
-	*__envp = __r.__bits.__reg;
+	*envp = __r.__bits.__reg;
 	return (0);
 }
 
 __fenv_static inline int
-feholdexcept(fenv_t *__envp)
+feholdexcept(fenv_t *envp)
 {
 	union __fpscr __r;
 
 	__mffs(&__r);
-	*__envp = __r.__bits.__reg;
+	*envp = __r.__bits.__reg;
 	__r.__bits.__reg &= ~(FE_ALL_EXCEPT | _ENABLE_MASK);
 	__mtfsf(__r);
 	return (0);
 }
 
 __fenv_static inline int
-fesetenv(const fenv_t *__envp)
+fesetenv(const fenv_t *envp)
 {
 	union __fpscr __r;
 
-	__r.__bits.__reg = *__envp;
+	__r.__bits.__reg = *envp;
 	__mtfsf(__r);
 	return (0);
 }
 
 __fenv_static inline int
-feupdateenv(const fenv_t *__envp)
+feupdateenv(const fenv_t *envp)
 {
 	union __fpscr __r;
 
 	__mffs(&__r);
 	__r.__bits.__reg &= FE_ALL_EXCEPT;
-	__r.__bits.__reg |= *__envp;
+	__r.__bits.__reg |= *envp;
 	__mtfsf(__r);
 	return (0);
 }
@@ -293,5 +293,6 @@ fegetexcept(void)
 #ifdef __cplusplus
 }
 #endif
+
 
 #endif	/* !_SYS_FENV_H_ */
