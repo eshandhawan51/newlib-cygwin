@@ -14,6 +14,7 @@
 
 @SET_MAKE@
 
+
 VPATH = @srcdir@
 am__make_dryrun = \
   { \
@@ -50,10 +51,10 @@ PRE_UNINSTALL = :
 POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
+DIST_COMMON = $(srcdir)/../../../Makefile.shared $(srcdir)/Makefile.in \
+	$(srcdir)/Makefile.am $(top_srcdir)/configure \
+	$(am__configure_deps) $(top_srcdir)/../../../../mkinstalldirs
 subdir = .
-DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/Makefile.am \
-	$(top_srcdir)/configure $(am__configure_deps) \
-	$(top_srcdir)/../../../../mkinstalldirs
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/../../../acinclude.m4 \
 	$(top_srcdir)/configure.in
@@ -68,14 +69,17 @@ LIBRARIES = $(noinst_LIBRARIES)
 ARFLAGS = cru
 lib_a_AR = $(AR) $(ARFLAGS)
 lib_a_LIBADD =
-am_lib_a_OBJECTS = lib_a-scan.$(OBJEXT) lib_a-shuffle.$(OBJEXT) \
-	lib_a-setjmp.$(OBJEXT)
+am__objects_1 = lib_a-feclearexcept.$(OBJEXT) lib_a-fegetenv.$(OBJEXT) \
+	lib_a-fegetexceptflag.$(OBJEXT) lib_a-fegetround.$(OBJEXT) \
+	lib_a-feholdexcept.$(OBJEXT) lib_a-feraiseexcept.$(OBJEXT) \
+	lib_a-fesetenv.$(OBJEXT) lib_a-fesetexceptflag.$(OBJEXT) \
+	lib_a-fesetround.$(OBJEXT) lib_a-fetestexcept.$(OBJEXT) \
+	lib_a-feupdateenv.$(OBJEXT) lib_a-fenv.$(OBJEXT)
+am_lib_a_OBJECTS = $(am__objects_1)
 lib_a_OBJECTS = $(am_lib_a_OBJECTS)
 DEFAULT_INCLUDES = -I.@am__isrc@
 depcomp =
 am__depfiles_maybe =
-CPPASCOMPILE = $(CCAS) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) \
-	$(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CCASFLAGS) $(CCASFLAGS)
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
 CCLD = $(CC)
@@ -86,6 +90,7 @@ am__can_run_installinfo = \
     n|no|NO) false;; \
     *) (install-info --version) >/dev/null 2>&1;; \
   esac
+DATA = $(noinst_DATA)
 ETAGS = etags
 CTAGS = ctags
 CSCOPE = cscope
@@ -193,22 +198,39 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-AUTOMAKE_OPTIONS = cygnus
-INCLUDES = $(NEWLIB_CFLAGS) $(CROSS_CFLAGS) $(TARGET_CFLAGS)
-AM_CCASFLAGS = $(INCLUDES)
+INCLUDES = -I $(newlib_basedir)/../newlib/libm/common $(NEWLIB_CFLAGS) \
+	$(CROSS_CFLAGS) $(TARGET_CFLAGS)
+
+LIB_SOURCES = \
+	feclearexcept.c  fegetenv.c fegetexceptflag.c \
+	fegetround.c feholdexcept.c feraiseexcept.c fesetenv.c \
+	fesetexceptflag.c fesetround.c fetestexcept.c feupdateenv.c \
+	fenv.c
+
 noinst_LIBRARIES = lib.a
-lib_a_SOURCES = scan.c shuffle.c setjmp.S
-lib_a_CCASFLAGS = $(AM_CCASFLAGS)
+lib_a_SOURCES = $(LIB_SOURCES)
 lib_a_CFLAGS = $(AM_CFLAGS)
+lib_a_CCASFLAGS = $(AM_CCASFLAGS)
+noinst_DATA = 
+
+#
+# documentation rules
+#
+SUFFIXES = .def .xml
+CHEW = ${top_builddir}/../doc/makedoc -f $(top_srcdir)/../doc/doc.str
+DOCBOOK_CHEW = ${top_srcdir}/../doc/makedocbook.py
+DOCBOOK_OUT_FILES = $(CHEWOUT_FILES:.def=.xml)
+DOCBOOK_CHAPTERS = $(CHAPTERS:.tex=.xml)
+CLEANFILES = $(CHEWOUT_FILES) $(DOCBOOK_OUT_FILES)
 ACLOCAL_AMFLAGS = -I ../../.. -I ../../../..
 CONFIG_STATUS_DEPENDENCIES = $(newlib_basedir)/configure.host
 all: all-am
 
 .SUFFIXES:
-.SUFFIXES: .S .c .o .obj
+.SUFFIXES: .def .xml .c .o .obj
 am--refresh: Makefile
 	@:
-$(srcdir)/Makefile.in: @MAINTAINER_MODE_TRUE@ $(srcdir)/Makefile.am  $(am__configure_deps)
+$(srcdir)/Makefile.in: @MAINTAINER_MODE_TRUE@ $(srcdir)/Makefile.am $(srcdir)/../../../Makefile.shared $(am__configure_deps)
 	@for dep in $?; do \
 	  case '$(am__configure_deps)' in \
 	    *$$dep*) \
@@ -231,6 +253,7 @@ Makefile: $(srcdir)/Makefile.in $(top_builddir)/config.status
 	    echo ' cd $(top_builddir) && $(SHELL) ./config.status $@ $(am__depfiles_maybe)'; \
 	    cd $(top_builddir) && $(SHELL) ./config.status $@ $(am__depfiles_maybe);; \
 	esac;
+$(srcdir)/../../../Makefile.shared:
 
 $(top_builddir)/config.status: $(top_srcdir)/configure $(CONFIG_STATUS_DEPENDENCIES)
 	$(SHELL) ./config.status --recheck
@@ -254,35 +277,83 @@ mostlyclean-compile:
 distclean-compile:
 	-rm -f *.tab.c
 
-.S.o:
-	$(CPPASCOMPILE) -c -o $@ $<
-
-.S.obj:
-	$(CPPASCOMPILE) -c -o $@ `$(CYGPATH_W) '$<'`
-
-lib_a-setjmp.o: setjmp.S
-	$(CCAS) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CCASFLAGS) $(CCASFLAGS) -c -o lib_a-setjmp.o `test -f 'setjmp.S' || echo '$(srcdir)/'`setjmp.S
-
-lib_a-setjmp.obj: setjmp.S
-	$(CCAS) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CCASFLAGS) $(CCASFLAGS) -c -o lib_a-setjmp.obj `if test -f 'setjmp.S'; then $(CYGPATH_W) 'setjmp.S'; else $(CYGPATH_W) '$(srcdir)/setjmp.S'; fi`
-
 .c.o:
 	$(COMPILE) -c $<
 
 .c.obj:
 	$(COMPILE) -c `$(CYGPATH_W) '$<'`
 
-lib_a-scan.o: scan.c
-	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-scan.o `test -f 'scan.c' || echo '$(srcdir)/'`scan.c
+lib_a-feclearexcept.o: feclearexcept.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-feclearexcept.o `test -f 'feclearexcept.c' || echo '$(srcdir)/'`feclearexcept.c
 
-lib_a-scan.obj: scan.c
-	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-scan.obj `if test -f 'scan.c'; then $(CYGPATH_W) 'scan.c'; else $(CYGPATH_W) '$(srcdir)/scan.c'; fi`
+lib_a-feclearexcept.obj: feclearexcept.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-feclearexcept.obj `if test -f 'feclearexcept.c'; then $(CYGPATH_W) 'feclearexcept.c'; else $(CYGPATH_W) '$(srcdir)/feclearexcept.c'; fi`
 
-lib_a-shuffle.o: shuffle.c
-	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-shuffle.o `test -f 'shuffle.c' || echo '$(srcdir)/'`shuffle.c
+lib_a-fegetenv.o: fegetenv.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fegetenv.o `test -f 'fegetenv.c' || echo '$(srcdir)/'`fegetenv.c
 
-lib_a-shuffle.obj: shuffle.c
-	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-shuffle.obj `if test -f 'shuffle.c'; then $(CYGPATH_W) 'shuffle.c'; else $(CYGPATH_W) '$(srcdir)/shuffle.c'; fi`
+lib_a-fegetenv.obj: fegetenv.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fegetenv.obj `if test -f 'fegetenv.c'; then $(CYGPATH_W) 'fegetenv.c'; else $(CYGPATH_W) '$(srcdir)/fegetenv.c'; fi`
+
+lib_a-fegetexceptflag.o: fegetexceptflag.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fegetexceptflag.o `test -f 'fegetexceptflag.c' || echo '$(srcdir)/'`fegetexceptflag.c
+
+lib_a-fegetexceptflag.obj: fegetexceptflag.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fegetexceptflag.obj `if test -f 'fegetexceptflag.c'; then $(CYGPATH_W) 'fegetexceptflag.c'; else $(CYGPATH_W) '$(srcdir)/fegetexceptflag.c'; fi`
+
+lib_a-fegetround.o: fegetround.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fegetround.o `test -f 'fegetround.c' || echo '$(srcdir)/'`fegetround.c
+
+lib_a-fegetround.obj: fegetround.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fegetround.obj `if test -f 'fegetround.c'; then $(CYGPATH_W) 'fegetround.c'; else $(CYGPATH_W) '$(srcdir)/fegetround.c'; fi`
+
+lib_a-feholdexcept.o: feholdexcept.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-feholdexcept.o `test -f 'feholdexcept.c' || echo '$(srcdir)/'`feholdexcept.c
+
+lib_a-feholdexcept.obj: feholdexcept.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-feholdexcept.obj `if test -f 'feholdexcept.c'; then $(CYGPATH_W) 'feholdexcept.c'; else $(CYGPATH_W) '$(srcdir)/feholdexcept.c'; fi`
+
+lib_a-feraiseexcept.o: feraiseexcept.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-feraiseexcept.o `test -f 'feraiseexcept.c' || echo '$(srcdir)/'`feraiseexcept.c
+
+lib_a-feraiseexcept.obj: feraiseexcept.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-feraiseexcept.obj `if test -f 'feraiseexcept.c'; then $(CYGPATH_W) 'feraiseexcept.c'; else $(CYGPATH_W) '$(srcdir)/feraiseexcept.c'; fi`
+
+lib_a-fesetenv.o: fesetenv.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fesetenv.o `test -f 'fesetenv.c' || echo '$(srcdir)/'`fesetenv.c
+
+lib_a-fesetenv.obj: fesetenv.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fesetenv.obj `if test -f 'fesetenv.c'; then $(CYGPATH_W) 'fesetenv.c'; else $(CYGPATH_W) '$(srcdir)/fesetenv.c'; fi`
+
+lib_a-fesetexceptflag.o: fesetexceptflag.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fesetexceptflag.o `test -f 'fesetexceptflag.c' || echo '$(srcdir)/'`fesetexceptflag.c
+
+lib_a-fesetexceptflag.obj: fesetexceptflag.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fesetexceptflag.obj `if test -f 'fesetexceptflag.c'; then $(CYGPATH_W) 'fesetexceptflag.c'; else $(CYGPATH_W) '$(srcdir)/fesetexceptflag.c'; fi`
+
+lib_a-fesetround.o: fesetround.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fesetround.o `test -f 'fesetround.c' || echo '$(srcdir)/'`fesetround.c
+
+lib_a-fesetround.obj: fesetround.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fesetround.obj `if test -f 'fesetround.c'; then $(CYGPATH_W) 'fesetround.c'; else $(CYGPATH_W) '$(srcdir)/fesetround.c'; fi`
+
+lib_a-fetestexcept.o: fetestexcept.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fetestexcept.o `test -f 'fetestexcept.c' || echo '$(srcdir)/'`fetestexcept.c
+
+lib_a-fetestexcept.obj: fetestexcept.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fetestexcept.obj `if test -f 'fetestexcept.c'; then $(CYGPATH_W) 'fetestexcept.c'; else $(CYGPATH_W) '$(srcdir)/fetestexcept.c'; fi`
+
+lib_a-feupdateenv.o: feupdateenv.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-feupdateenv.o `test -f 'feupdateenv.c' || echo '$(srcdir)/'`feupdateenv.c
+
+lib_a-feupdateenv.obj: feupdateenv.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-feupdateenv.obj `if test -f 'feupdateenv.c'; then $(CYGPATH_W) 'feupdateenv.c'; else $(CYGPATH_W) '$(srcdir)/feupdateenv.c'; fi`
+
+lib_a-fenv.o: fenv.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) -I -I $(newlib_basedir)/../newlib/libc/posix $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fenv.o `test -f 'fenv.c' || echo '$(srcdir)/'`fenv.c
+
+lib_a-fenv.obj: fenv.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) -I $(newlib_basedir)/../newlib/libc/posix $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fenv.obj `if test -f 'fenv.c'; then $(CYGPATH_W) 'fenv.c'; else $(CYGPATH_W) '$(srcdir)/fenv.c'; fi`
 
 ID: $(HEADERS) $(SOURCES) $(LISP) $(TAGS_FILES)
 	list='$(SOURCES) $(HEADERS) $(LISP) $(TAGS_FILES)'; \
@@ -361,7 +432,7 @@ distclean-tags:
 	-rm -f cscope.out cscope.in.out cscope.po.out cscope.files
 check-am:
 check: check-am
-all-am: Makefile $(LIBRARIES)
+all-am: Makefile $(LIBRARIES) $(DATA)
 installdirs:
 install: install-am
 install-exec: install-exec-am
@@ -385,6 +456,7 @@ install-strip:
 mostlyclean-generic:
 
 clean-generic:
+	-test -z "$(CLEANFILES)" || rm -f $(CLEANFILES)
 
 distclean-generic:
 	-test -z "$(CONFIG_CLEAN_FILES)" || rm -f $(CONFIG_CLEAN_FILES)
@@ -478,6 +550,34 @@ uninstall-am:
 	mostlyclean-compile mostlyclean-generic pdf pdf-am ps ps-am \
 	tags uninstall uninstall-am
 
+objectlist.awk.in: $(noinst_LTLIBRARIES)
+	-rm -f objectlist.awk.in
+	for i in `ls *.lo` ; \
+	do \
+	  echo $$i `pwd`/$$i >> objectlist.awk.in ; \
+	done
+
+.c.def:
+	$(CHEW) < $< > $*.def || ( rm $*.def && false )
+	@touch stmp-def
+
+TARGETDOC ?= ../tmp.texi
+
+doc: $(CHEWOUT_FILES)
+	for chapter in $(CHAPTERS) ; \
+	do \
+	  cat $(srcdir)/$$chapter >> $(TARGETDOC) ; \
+	done
+
+.c.xml:
+	$(DOCBOOK_CHEW) < $< > $*.xml || ( rm $*.xml && false )
+	@touch stmp-xml
+
+docbook: $(DOCBOOK_OUT_FILES)
+	for chapter in $(DOCBOOK_CHAPTERS) ; \
+	do \
+	  ${top_srcdir}/../doc/chapter-texi2docbook.py <$(srcdir)/$${chapter%.xml}.tex >../$$chapter ; \
+	done
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

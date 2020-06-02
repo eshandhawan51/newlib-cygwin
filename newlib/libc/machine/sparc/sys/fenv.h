@@ -31,7 +31,7 @@
 #ifndef	_SYS_FENV_H_
 #define	_SYS_FENV_H_
 
-#include <sys/stdint.h>
+#include <stdint.h>
 
 #ifdef __arch64__
 typedef	uint64_t	fenv_t;
