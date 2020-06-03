@@ -26,10 +26,12 @@
 #include <sys/cdefs.h>
 __RCSID("$NetBSD: fenv.c,v 1.2 2017/03/22 23:11:09 chs Exp $");
 
-#include <namespace.h>
+
 
 #include <assert.h>
 #include <fenv.h>
+
+#define _DIAGASSERT(x) assert(x)
 
 #ifdef __weak_alias
 __weak_alias(feclearexcept,_feclearexcept)
@@ -90,7 +92,7 @@ fegetexceptflag(fexcept_t *flagp, int excepts)
 	int ex;
 
 	_DIAGASSERT(flagp != NULL);
-	_DIAGASSERT((excepts & ~_FE_ALL_EXCEPT) == 0);
+	_DIAGASSERT((excepts & ~FE_ALL_EXCEPT) == 0);
 
 	ex = excepts & FE_ALL_EXCEPT;
 

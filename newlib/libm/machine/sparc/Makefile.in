@@ -350,10 +350,10 @@ lib_a-feupdateenv.obj: feupdateenv.c
 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-feupdateenv.obj `if test -f 'feupdateenv.c'; then $(CYGPATH_W) 'feupdateenv.c'; else $(CYGPATH_W) '$(srcdir)/feupdateenv.c'; fi`
 
 lib_a-fenv.o: fenv.c
-	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) -I -I $(newlib_basedir)/../newlib/libc/posix $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fenv.o `test -f 'fenv.c' || echo '$(srcdir)/'`fenv.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fenv.o `test -f 'fenv.c' || echo '$(srcdir)/'`fenv.c
 
 lib_a-fenv.obj: fenv.c
-	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) -I $(newlib_basedir)/../newlib/libc/posix $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fenv.obj `if test -f 'fenv.c'; then $(CYGPATH_W) 'fenv.c'; else $(CYGPATH_W) '$(srcdir)/fenv.c'; fi`
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fenv.obj `if test -f 'fenv.c'; then $(CYGPATH_W) 'fenv.c'; else $(CYGPATH_W) '$(srcdir)/fenv.c'; fi`
 
 ID: $(HEADERS) $(SOURCES) $(LISP) $(TAGS_FILES)
 	list='$(SOURCES) $(HEADERS) $(LISP) $(TAGS_FILES)'; \
