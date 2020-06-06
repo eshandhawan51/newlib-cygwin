@@ -13,8 +13,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - name : autoreconf
+      run : cd newlib | autoreconf -fvi 
     - name: configure
-      run: ./configure --target=arm-rtems5 --disable-shared --disable-nls --enable-werror --enable-newlib-supplied-syscalls --enable-interwork --enable-multilib --with-gnu-as --with-gnu-ld
+      run: ./configure --target=aarch64-rtems5 --disable-shared --disable-nls --enable-werror --enable-newlib-supplied-syscalls --enable-interwork --enable-multilib --with-gnu-as --with-gnu-ld
     - name: make
       run: make all
     - name: make check
