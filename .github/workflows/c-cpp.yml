@@ -1,0 +1,23 @@
+name: C/C++ CI
+
+on:
+  push:
+    branches: [ aarch64 ]
+  pull_request:
+    branches: [ aarch64 ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: configure
+      run: ./configure --target=arm-rtems5 --disable-shared --disable-nls --enable-werror --enable-newlib-supplied-syscalls --enable-interwork --enable-multilib --with-gnu-as --with-gnu-ld
+    - name: make
+      run: make all
+    - name: make check
+      run: make check
+    - name: make distcheck
+      run: make distcheck
