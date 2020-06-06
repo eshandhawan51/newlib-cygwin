@@ -328,7 +328,7 @@ class fhandler_base
 
   virtual bool get_readahead_valid () { return raixget () < ralen (); }
   int puts_readahead (const char *s, size_t len = (size_t) -1);
-  int put_readahead (char value);
+  virtual int put_readahead (char value);
 
   int get_readahead ();
   int peek_readahead (int queryput = 0);
@@ -1268,67 +1268,213 @@ public:
 };
 
 #define CYGWIN_FIFO_PIPE_NAME_LEN     47
-#define MAX_CLIENTS 64
 
+/* We view the fc_closing state as borderline between open and closed
+   for a writer at the other end of a fifo_client_handler.
+
+   We still attempt to read from the writer when the handler is in
+   this state, and we don't declare a reader to be at EOF if there's a
+   handler in this state.  But the existence of a handler in this
+   state is not sufficient to unblock a reader trying to open. */
 enum fifo_client_connect_state
 {
   fc_unknown,
+  fc_error,
+  fc_disconnected,
+  fc_listening,
+  fc_closing,
   fc_connected,
-  fc_invalid
-};
-
-enum
-{
-  FILE_PIPE_INPUT_AVAILABLE_STATE = 5
+  fc_input_avail,
 };
 
 struct fifo_client_handler
 {
-  fhandler_base *fh;
+  HANDLE h;
   fifo_client_connect_state state;
-  fifo_client_handler () : fh (NULL), state (fc_unknown) {}
-  int close ();
-/* Returns FILE_PIPE_DISCONNECTED_STATE, FILE_PIPE_LISTENING_STATE,
-   FILE_PIPE_CONNECTED_STATE, FILE_PIPE_CLOSING_STATE,
-   FILE_PIPE_INPUT_AVAILABLE_STATE, or -1 on error. */
-  int pipe_state ();
+  fifo_client_handler () : h (NULL), state (fc_unknown) {}
+  void close () { NtClose (h); }
+  fifo_client_connect_state set_state ();
+};
+
+class fhandler_fifo;
+
+struct fifo_reader_id_t
+{
+  DWORD winpid;
+  fhandler_fifo *fh;
+
+  operator bool () const { return winpid != 0 || fh != NULL; }
+
+  friend bool operator == (const fifo_reader_id_t &l, const fifo_reader_id_t &r)
+  {
+    return l.winpid == r.winpid && l.fh == r.fh;
+  }
+
+  friend bool operator != (const fifo_reader_id_t &l, const fifo_reader_id_t &r)
+  {
+    return l.winpid != r.winpid || l.fh != r.fh;
+  }
+};
+
+/* Info needed by all readers of a FIFO, stored in named shared memory. */
+class fifo_shmem_t
+{
+  LONG _nreaders;
+  fifo_reader_id_t _owner, _prev_owner, _pending_owner;
+  af_unix_spinlock_t _owner_lock, _reading_lock, _reader_opening_lock;
+
+  /* Info about shared memory block used for temporary storage of the
+     owner's fc_handler list. */
+  LONG _sh_nhandlers, _sh_shandlers, _sh_fc_handler_committed,
+    _sh_fc_handler_updated;
+
+public:
+  int inc_nreaders () { return (int) InterlockedIncrement (&_nreaders); }
+  int dec_nreaders () { return (int) InterlockedDecrement (&_nreaders); }
+
+  fifo_reader_id_t get_owner () const { return _owner; }
+  void set_owner (fifo_reader_id_t fr_id) { _owner = fr_id; }
+  fifo_reader_id_t get_prev_owner () const { return _prev_owner; }
+  void set_prev_owner (fifo_reader_id_t fr_id) { _prev_owner = fr_id; }
+  fifo_reader_id_t get_pending_owner () const { return _pending_owner; }
+  void set_pending_owner (fifo_reader_id_t fr_id) { _pending_owner = fr_id; }
+
+  void owner_lock () { _owner_lock.lock (); }
+  void owner_unlock () { _owner_lock.unlock (); }
+  void reading_lock () { _reading_lock.lock (); }
+  void reading_unlock () { _reading_lock.unlock (); }
+  void reader_opening_lock () { _reader_opening_lock.lock (); }
+  void reader_opening_unlock () { _reader_opening_lock.unlock (); }
+
+  int get_shared_nhandlers () const { return (int) _sh_nhandlers; }
+  void set_shared_nhandlers (int n) { InterlockedExchange (&_sh_nhandlers, n); }
+  int get_shared_shandlers () const { return (int) _sh_shandlers; }
+  void set_shared_shandlers (int n) { InterlockedExchange (&_sh_shandlers, n); }
+  size_t get_shared_fc_handler_committed () const
+  { return (size_t) _sh_fc_handler_committed; }
+  void set_shared_fc_handler_committed (size_t n)
+  { InterlockedExchange (&_sh_fc_handler_committed, (LONG) n); }
+  bool shared_fc_handler_updated () const { return _sh_fc_handler_updated; }
+  void shared_fc_handler_updated (bool val)
+  { InterlockedExchange (&_sh_fc_handler_updated, val); }
 };
 
 class fhandler_fifo: public fhandler_base
 {
-  HANDLE read_ready;
-  HANDLE write_ready;
-  HANDLE listen_client_thr;
-  HANDLE lct_termination_evt;
+  /* Handles to named events shared by all fhandlers for a given FIFO. */
+  HANDLE read_ready;            /* A reader is open; OK for a writer to open. */
+  HANDLE write_ready;           /* A writer is open; OK for a reader to open. */
+  HANDLE writer_opening;        /* A writer is opening; no EOF. */
+
+  /* Handles to named events needed by all readers of a given FIFO. */
+  HANDLE owner_needed_evt;      /* The owner is closing. */
+  HANDLE owner_found_evt;       /* A new owner has taken over. */
+  HANDLE update_needed_evt;     /* shared_fc_handler needs updating. */
+  HANDLE check_write_ready_evt; /* write_ready needs to be checked. */
+  HANDLE write_ready_ok_evt;    /* check_write_ready is done. */
+
+  /* Handles to non-shared events needed for fifo_reader_threads. */
+  HANDLE cancel_evt;            /* Signal thread to terminate. */
+  HANDLE thr_sync_evt;          /* The thread has terminated. */
+
   UNICODE_STRING pipe_name;
   WCHAR pipe_name_buf[CYGWIN_FIFO_PIPE_NAME_LEN + 1];
-  fifo_client_handler fc_handler[MAX_CLIENTS];
-  int nhandlers, nconnected;
+  bool _maybe_eof;
+  fifo_client_handler *fc_handler;     /* Dynamically growing array. */
+  int shandlers;                       /* Size (capacity) of the array. */
+  int nhandlers;                       /* Number of elements in the array. */
   af_unix_spinlock_t _fifo_client_lock;
   bool reader, writer, duplexer;
   size_t max_atomic_write;
+  fifo_reader_id_t me;
+
+  HANDLE shmem_handle;
+  fifo_shmem_t *shmem;
+  HANDLE shared_fc_hdl;
+  /* Dynamically growing array in shared memory. */
+  fifo_client_handler *shared_fc_handler;
+
   bool __reg2 wait (HANDLE);
   static NTSTATUS npfs_handle (HANDLE &);
-  HANDLE create_pipe_instance (bool);
+  HANDLE create_pipe_instance ();
   NTSTATUS open_pipe (HANDLE&);
-  int add_client_handler ();
-  int delete_client_handler (int);
-  bool listen_client ();
-  int stop_listen_client ();
-  int check_listen_client_thread ();
-  void record_connection (fifo_client_handler&);
+  NTSTATUS wait_open_pipe (HANDLE&);
+  int add_client_handler (bool new_pipe_instance = true);
+  void delete_client_handler (int);
+  void cleanup_handlers ();
+  void close_all_handlers ();
+  void cancel_reader_thread ();
+  void record_connection (fifo_client_handler&,
+			  fifo_client_connect_state = fc_connected);
+
+  int create_shmem ();
+  int reopen_shmem ();
+  int create_shared_fc_handler ();
+  int reopen_shared_fc_handler ();
+  int remap_shared_fc_handler (size_t);
+
+  int inc_nreaders () { return shmem->inc_nreaders (); }
+  int dec_nreaders () { return shmem->dec_nreaders (); }
+
+  fifo_reader_id_t get_prev_owner () const { return shmem->get_prev_owner (); }
+  void set_prev_owner (fifo_reader_id_t fr_id)
+  { shmem->set_prev_owner (fr_id); }
+  fifo_reader_id_t get_pending_owner () const
+  { return shmem->get_pending_owner (); }
+  void set_pending_owner (fifo_reader_id_t fr_id)
+  { shmem->set_pending_owner (fr_id); }
+
+  void owner_needed ()
+  {
+    ResetEvent (owner_found_evt);
+    SetEvent (owner_needed_evt);
+  }
+  void owner_found ()
+  {
+    ResetEvent (owner_needed_evt);
+    SetEvent (owner_found_evt);
+  }
+
+  int get_shared_nhandlers () { return shmem->get_shared_nhandlers (); }
+  void set_shared_nhandlers (int n) { shmem->set_shared_nhandlers (n); }
+  int get_shared_shandlers () { return shmem->get_shared_shandlers (); }
+  void set_shared_shandlers (int n) { shmem->set_shared_shandlers (n); }
+  size_t get_shared_fc_handler_committed () const
+  { return shmem->get_shared_fc_handler_committed (); }
+  void set_shared_fc_handler_committed (size_t n)
+  { shmem->set_shared_fc_handler_committed (n); }
+  int update_my_handlers ();
+  int update_shared_handlers ();
+  bool shared_fc_handler_updated () const
+  { return shmem->shared_fc_handler_updated (); }
+  void shared_fc_handler_updated (bool val)
+  { shmem->shared_fc_handler_updated (val); }
+  void check_write_ready ();
+  void reader_opening_lock () { shmem->reader_opening_lock (); }
+  void reader_opening_unlock () { shmem->reader_opening_unlock (); }
+
 public:
   fhandler_fifo ();
   bool hit_eof ();
+  bool maybe_eof () const { return _maybe_eof; }
+  void maybe_eof (bool val) { _maybe_eof = val; }
   int get_nhandlers () const { return nhandlers; }
-  HANDLE get_fc_handle (int i) const
-  { return fc_handler[i].fh->get_handle (); }
-  bool is_connected (int i) const
-  { return fc_handler[i].state == fc_connected; }
+  fifo_client_handler &get_fc_handler (int i) { return fc_handler[i]; }
   PUNICODE_STRING get_pipe_name ();
-  DWORD listen_client_thread ();
+  DWORD fifo_reader_thread_func ();
   void fifo_client_lock () { _fifo_client_lock.lock (); }
   void fifo_client_unlock () { _fifo_client_lock.unlock (); }
+
+  fifo_reader_id_t get_me () const { return me; }
+  fifo_reader_id_t get_owner () const { return shmem->get_owner (); }
+  void set_owner (fifo_reader_id_t fr_id) { shmem->set_owner (fr_id); }
+  void owner_lock () { shmem->owner_lock (); }
+  void owner_unlock () { shmem->owner_unlock (); }
+
+  void take_ownership ();
+  void reading_lock () { shmem->reading_lock (); }
+  void reading_unlock () { shmem->reading_unlock (); }
+
   int open (int, mode_t);
   off_t lseek (off_t offset, int whence);
   int close ();
@@ -1338,19 +1484,9 @@ public:
   void set_close_on_exec (bool val);
   void __reg3 raw_read (void *ptr, size_t& ulen);
   ssize_t __reg3 raw_write (const void *ptr, size_t ulen);
-  bool arm (HANDLE h);
-  bool need_fixup_before () const { return reader; }
-  int fixup_before_fork_exec (DWORD) { return stop_listen_client (); }
-  void init_fixup_before ();
   void fixup_after_fork (HANDLE);
   void fixup_after_exec ();
   int __reg2 fstatvfs (struct statvfs *buf);
-  void clear_readahead ()
-  {
-    fhandler_base::clear_readahead ();
-    for (int i = 0; i < nhandlers; i++)
-      fc_handler[i].fh->clear_readahead ();
-  }
   select_record *select_read (select_stuff *);
   select_record *select_write (select_stuff *);
   select_record *select_except (select_stuff *);
@@ -1369,13 +1505,10 @@ public:
     void *ptr = (void *) ccalloc (malloc_type, 1, sizeof (fhandler_fifo));
     fhandler_fifo *fhf = new (ptr) fhandler_fifo (ptr);
     /* We don't want our client list to change any more. */
-    stop_listen_client ();
     copyto (fhf);
     /* fhf->pipe_name_buf is a *copy* of this->pipe_name_buf, but
        fhf->pipe_name.Buffer == this->pipe_name_buf. */
     fhf->pipe_name.Buffer = fhf->pipe_name_buf;
-    for (int i = 0; i < nhandlers; i++)
-      fhf->fc_handler[i].fh = fc_handler[i].fh->clone ();
     return fhf;
   }
 };
@@ -1907,6 +2040,7 @@ class dev_console
   char *cons_rapoi;
   LONG xterm_mode_input;
   LONG xterm_mode_output;
+  bool cursor_key_app_mode;
 
   inline UINT get_console_cp ();
   DWORD con_to_str (char *d, int dlen, WCHAR w);
@@ -2151,6 +2285,7 @@ class fhandler_pty_slave: public fhandler_pty_common
 
   bool try_reattach_pcon ();
   void restore_reattach_pcon ();
+  inline void free_attached_console ();
 
  public:
   /* Constructor */
@@ -2246,6 +2381,7 @@ public:
   int process_slave_output (char *buf, size_t len, int pktmode_on);
   void doecho (const void *str, DWORD len);
   int accept_input ();
+  int put_readahead (char value);
   int open (int flags, mode_t mode = 0);
   void open_setup (int flags);
   ssize_t __stdcall write (const void *ptr, size_t len);

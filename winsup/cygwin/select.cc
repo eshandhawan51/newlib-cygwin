@@ -866,31 +866,33 @@ peek_fifo (select_record *s, bool from_select)
 	  goto out;
 	}
 
-      if (fh->hit_eof ())
-	{
-	  select_printf ("read: %s, saw EOF", fh->get_name ());
-	  gotone = s->read_ready = true;
-	  if (s->except_selected)
-	    gotone += s->except_ready = true;
-	  goto out;
-	}
-
+      fh->reading_lock ();
+      fh->take_ownership ();
       fh->fifo_client_lock ();
+      int nconnected = 0;
       for (int i = 0; i < fh->get_nhandlers (); i++)
-	if (fh->is_connected (i))
+	if (fh->get_fc_handler (i).set_state () >= fc_closing)
 	  {
-	    int n = pipe_data_available (s->fd, fh, fh->get_fc_handle (i),
-					 false);
-	    if (n > 0)
+	    nconnected++;
+	    if (fh->get_fc_handler (i).state == fc_input_avail)
 	      {
-		select_printf ("read: %s, ready for read: avail %d, client %d",
-			       fh->get_name (), n, i);
+		select_printf ("read: %s, ready for read", fh->get_name ());
 		fh->fifo_client_unlock ();
+		fh->reading_unlock ();
 		gotone += s->read_ready = true;
 		goto out;
 	      }
 	  }
+      fh->maybe_eof (!nconnected);
       fh->fifo_client_unlock ();
+      if (fh->maybe_eof () && fh->hit_eof ())
+	{
+	  select_printf ("read: %s, saw EOF", fh->get_name ());
+	  gotone += s->read_ready = true;
+	  if (s->except_selected)
+	    gotone += s->except_ready = true;
+	}
+      fh->reading_unlock ();
     }
 out:
   if (s->write_selected)
