@@ -43,7 +43,6 @@
 #define SOFTFP_ABI
 #endif
 
-
 #ifndef FENV_MANGLE
 /*
  * Hopefully the system ID byte is immutable, so it's valid to use
@@ -171,7 +170,7 @@ __softfp_round_from_vfp(int round)
 int feclearexcept(int excepts)
 {
 
-#ifdef SOFTFP_ABI
+#ifndef SOFTFP_ABI
 		__vfp_feclearexcept(excepts);
 #endif
 	__softfp_feclearexcept(excepts);
