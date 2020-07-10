@@ -102,8 +102,6 @@ extern inline int fegetexcept(void);
 #else /* !FENV_MANGLE && SOFTFP_ABI */
 /* Set by libc when the VFP unit is enabled */
 
-int _libc_arm_fpu_present;
-
 int __softfp_feclearexcept(int excepts);
 int __softfp_fegetexceptflag(fexcept_t *flagp, int excepts);
 int __softfp_fesetexceptflag(const fexcept_t *flagp, int excepts);
@@ -119,6 +117,7 @@ int __softfp_feenableexcept(int __mask);
 int __softfp_fedisableexcept(int __mask);
 int __softfp_fegetexcept(void);
 
+#ifndef SOFTFP_ABI
 int __vfp_feclearexcept(int excepts);
 int __vfp_fegetexceptflag(fexcept_t *flagp, int excepts);
 int __vfp_fesetexceptflag(const fexcept_t *flagp, int excepts);
@@ -133,6 +132,7 @@ int __vfp_feupdateenv(const fenv_t *envp);
 int __vfp_feenableexcept(int __mask);
 int __vfp_fedisableexcept(int __mask);
 int __vfp_fegetexcept(void);
+#endif
 
 static int
 __softfp_round_to_vfp(int round)
@@ -171,8 +171,9 @@ __softfp_round_from_vfp(int round)
 int feclearexcept(int excepts)
 {
 
-	if (_libc_arm_fpu_present)
+#ifdef SOFTFP_ABI
 		__vfp_feclearexcept(excepts);
+#endif
 	__softfp_feclearexcept(excepts);
 
 	return (0);
@@ -183,8 +184,9 @@ int fegetexceptflag(fexcept_t *flagp, int excepts)
 	fexcept_t __vfp_flagp;
 
 	__vfp_flagp = 0;
-	if (_libc_arm_fpu_present)
+#ifndef SOFTFP_ABI
 		__vfp_fegetexceptflag(&__vfp_flagp, excepts);
+#endif
 	__softfp_fegetexceptflag(flagp, excepts);
 
 	*flagp |= __vfp_flagp;
@@ -195,8 +197,9 @@ int fegetexceptflag(fexcept_t *flagp, int excepts)
 int fesetexceptflag(const fexcept_t *flagp, int excepts)
 {
 
-	if (_libc_arm_fpu_present)
+#ifndef SOFTFP_ABI
 		__vfp_fesetexceptflag(flagp, excepts);
+#endif
 	__softfp_fesetexceptflag(flagp, excepts);
 
 	return (0);
@@ -205,8 +208,9 @@ int fesetexceptflag(const fexcept_t *flagp, int excepts)
 int feraiseexcept(int excepts)
 {
 
-	if (_libc_arm_fpu_present)
+#ifndef SOFTFP_ABI
 		__vfp_feraiseexcept(excepts);
+#endif
 	__softfp_feraiseexcept(excepts);
 
 	return (0);
@@ -217,8 +221,9 @@ int fetestexcept(int excepts)
 	int __got_excepts;
 
 	__got_excepts = 0;
-	if (_libc_arm_fpu_present)
+#ifndef SOFTFP_ABI
 		__got_excepts = __vfp_fetestexcept(excepts);
+#endif
 	__got_excepts |= __softfp_fetestexcept(excepts);
 
 	return (__got_excepts);
@@ -227,16 +232,18 @@ int fetestexcept(int excepts)
 int fegetround(void)
 {
 
-	if (_libc_arm_fpu_present)
+#ifndef SOFTFP_ABI
 		return __softfp_round_from_vfp(__vfp_fegetround());
+#endif
 	return __softfp_fegetround();
 }
 
 int fesetround(int round)
 {
 
-	if (_libc_arm_fpu_present)
+#ifndef SOFTFP_ABI
 		__vfp_fesetround(__softfp_round_to_vfp(round));
+#endif
 	__softfp_fesetround(round);
 
 	return (0);
@@ -247,8 +254,9 @@ int fegetenv(fenv_t *envp)
 	fenv_t __vfp_envp;
 
 	__vfp_envp = 0;
-	if (_libc_arm_fpu_present)
+#ifndef SOFTFP_ABI
 		__vfp_fegetenv(&__vfp_envp);
+#endif
 	__softfp_fegetenv(envp);
 	*envp |= __vfp_envp;
 
@@ -260,8 +268,9 @@ int feholdexcept(fenv_t *envp)
 	fenv_t __vfp_envp;
 
 	__vfp_envp = 0;
-	if (_libc_arm_fpu_present)
+#ifndef SOFTFP_ABI
 		__vfp_feholdexcept(&__vfp_envp);
+#endif
 	__softfp_feholdexcept(envp);
 	*envp |= __vfp_envp;
 
@@ -271,8 +280,9 @@ int feholdexcept(fenv_t *envp)
 int fesetenv(const fenv_t *envp)
 {
 
-	if (_libc_arm_fpu_present)
+#ifndef SOFTFP_ABI
 		__vfp_fesetenv(envp);
+#endif
 	__softfp_fesetenv(envp);
 
 	return (0);
@@ -281,8 +291,9 @@ int fesetenv(const fenv_t *envp)
 int feupdateenv(const fenv_t *envp)
 {
 
-	if (_libc_arm_fpu_present)
+#ifndef SOFTFP_ABI
 		__vfp_feupdateenv(envp);
+#endif
 	__softfp_feupdateenv(envp);
 
 	return (0);
@@ -293,8 +304,9 @@ int feenableexcept(int __mask)
 	int __unmasked;
 
 	__unmasked = 0;
-	if (_libc_arm_fpu_present)
+#ifndef SOFTFP_ABI
 		__unmasked = __vfp_feenableexcept(__mask);
+#endif
 	__unmasked |= __softfp_feenableexcept(__mask);
 
 	return (__unmasked);
@@ -305,8 +317,9 @@ int fedisableexcept(int __mask)
 	int __unmasked;
 
 	__unmasked = 0;
-	if (_libc_arm_fpu_present)
+#ifndef SOFTFP_ABI
 		__unmasked = __vfp_fedisableexcept(__mask);
+#endif
 	__unmasked |= __softfp_fedisableexcept(__mask);
 
 	return (__unmasked);
@@ -317,8 +330,9 @@ int fegetexcept(void)
 	int __unmasked;
 
 	__unmasked = 0;
-	if (_libc_arm_fpu_present)
+#ifndef SOFTFP_ABI
 		__unmasked = __vfp_fegetexcept();
+#endif
 	__unmasked |= __softfp_fegetexcept();
 
 	return (__unmasked);

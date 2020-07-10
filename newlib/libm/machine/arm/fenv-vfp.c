@@ -25,8 +25,8 @@
  *
  * $FreeBSD$
  */
-
+#ifdef __ARM_PCS_VFP
 #define	FENV_MANGLE(x)	__vfp_ ##x
 #include <machine/fenv-mangle.h>
 #include "fenv.c"
-
+#endif
