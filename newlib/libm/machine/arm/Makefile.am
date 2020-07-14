@@ -33,8 +33,7 @@ LIB_SOURCES = \
 	fesetround.c \
 	fetestexcept.c \
 	feupdateenv.c \
-	fenv-vfp.c \
-	fenv-softfp.c 
+	fenv-vfp.c
 
 
 noinst_LIBRARIES = lib.a

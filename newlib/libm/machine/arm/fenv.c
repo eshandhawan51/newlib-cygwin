@@ -62,19 +62,7 @@ const fenv_t *_fe_dfl_env = &__fe_dfl_env;
  * the hardware's FPSR.  The hardware this file was written for doesn't
  * have rounding control bits, so we stick those in the system ID byte.
  */
-#ifndef __ARM_PCS_VFP
-#define	__set_env(env, flags, mask, rnd) env = ((flags)			\
-						| (mask)<<_FPUSW_SHIFT	\
-						| (rnd) << 24)
-#define	__env_flags(env)		((env) & FE_ALL_EXCEPT)
-#define	__env_mask(env)			(((env) >> _FPUSW_SHIFT)	\
-						& FE_ALL_EXCEPT)
-#define	__env_round(env)		(((env) >> 24) & _ROUND_MASK)
-
-#include <machine/fenv-softfloat.h>
-
-#else /* __ARM_PCS_VFP PRESENT */
-
+#ifndef SOFTFP_ABI
 #include <machine/fenv-vfp.h>
 
 #endif /* __ARM_PCS_VFP */
@@ -100,21 +88,6 @@ extern inline int fegetexcept(void);
 
 #else /* !FENV_MANGLE && SOFTFP_ABI */
 /* Set by libc when the VFP unit is enabled */
-
-int __softfp_feclearexcept(int excepts);
-int __softfp_fegetexceptflag(fexcept_t *flagp, int excepts);
-int __softfp_fesetexceptflag(const fexcept_t *flagp, int excepts);
-int __softfp_feraiseexcept(int excepts);
-int __softfp_fetestexcept(int excepts);
-int __softfp_fegetround(void);
-int __softfp_fesetround(int round);
-int __softfp_fegetenv(fenv_t *envp);
-int __softfp_feholdexcept(fenv_t *envp);
-int __softfp_fesetenv(const fenv_t *envp);
-int __softfp_feupdateenv(const fenv_t *envp);
-int __softfp_feenableexcept(int __mask);
-int __softfp_fedisableexcept(int __mask);
-int __softfp_fegetexcept(void);
 
 #ifndef SOFTFP_ABI
 int __vfp_feclearexcept(int excepts);
@@ -173,7 +146,7 @@ int feclearexcept(int excepts)
 #ifndef SOFTFP_ABI
 		__vfp_feclearexcept(excepts);
 #endif
-	__softfp_feclearexcept(excepts);
+	
 
 	return (0);
 }
@@ -186,8 +159,7 @@ int fegetexceptflag(fexcept_t *flagp, int excepts)
 #ifndef SOFTFP_ABI
 		__vfp_fegetexceptflag(&__vfp_flagp, excepts);
 #endif
-	__softfp_fegetexceptflag(flagp, excepts);
-
+	
 	*flagp |= __vfp_flagp;
 
 	return (0);
@@ -199,7 +171,6 @@ int fesetexceptflag(const fexcept_t *flagp, int excepts)
 #ifndef SOFTFP_ABI
 		__vfp_fesetexceptflag(flagp, excepts);
 #endif
-	__softfp_fesetexceptflag(flagp, excepts);
 
 	return (0);
 }
@@ -210,7 +181,6 @@ int feraiseexcept(int excepts)
 #ifndef SOFTFP_ABI
 		__vfp_feraiseexcept(excepts);
 #endif
-	__softfp_feraiseexcept(excepts);
 
 	return (0);
 }
@@ -223,7 +193,6 @@ int fetestexcept(int excepts)
 #ifndef SOFTFP_ABI
 		__got_excepts = __vfp_fetestexcept(excepts);
 #endif
-	__got_excepts |= __softfp_fetestexcept(excepts);
 
 	return (__got_excepts);
 }
@@ -234,7 +203,16 @@ int fegetround(void)
 #ifndef SOFTFP_ABI
 		return __softfp_round_from_vfp(__vfp_fegetround());
 #endif
-	return __softfp_fegetround();
+
+#ifdef SOFTFP_ABI
+/* For soft float */
+
+#ifdef FE_TONEAREST
+		return FE_TONEAREST;
+#else 
+		return 0;
+#endif
+
 }
 
 int fesetround(int round)
@@ -243,7 +221,6 @@ int fesetround(int round)
 #ifndef SOFTFP_ABI
 		__vfp_fesetround(__softfp_round_to_vfp(round));
 #endif
-	__softfp_fesetround(round);
 
 	return (0);
 }
@@ -256,7 +233,7 @@ int fegetenv(fenv_t *envp)
 #ifndef SOFTFP_ABI
 		__vfp_fegetenv(&__vfp_envp);
 #endif
-	__softfp_fegetenv(envp);
+
 	*envp |= __vfp_envp;
 
 	return (0);
@@ -282,7 +259,7 @@ int fesetenv(const fenv_t *envp)
 #ifndef SOFTFP_ABI
 		__vfp_fesetenv(envp);
 #endif
-	__softfp_fesetenv(envp);
+
 
 	return (0);
 }
@@ -292,10 +269,23 @@ int feupdateenv(const fenv_t *envp)
 
 #ifndef SOFTFP_ABI
 		__vfp_feupdateenv(envp);
-#endif
-	__softfp_feupdateenv(envp);
 
-	return (0);
+		return 0;
+#endif
+
+#ifdef SOFTFP_ABI
+
+#if defined FE_NOMASK_ENV && FE_ALL_EXCEPT != 0
+
+  if (envp == FE_NOMASK_ENV)
+      return 1;
+
+#endif
+
+  return 0;
+
+#endif
+
 }
 
 int feenableexcept(int __mask)
@@ -306,7 +296,6 @@ int feenableexcept(int __mask)
 #ifndef SOFTFP_ABI
 		__unmasked = __vfp_feenableexcept(__mask);
 #endif
-	__unmasked |= __softfp_feenableexcept(__mask);
 
 	return (__unmasked);
 }
@@ -319,7 +308,6 @@ int fedisableexcept(int __mask)
 #ifndef SOFTFP_ABI
 		__unmasked = __vfp_fedisableexcept(__mask);
 #endif
-	__unmasked |= __softfp_fedisableexcept(__mask);
 
 	return (__unmasked);
 }
@@ -332,7 +320,6 @@ int fegetexcept(void)
 #ifndef SOFTFP_ABI
 		__unmasked = __vfp_fegetexcept();
 #endif
-	__unmasked |= __softfp_fegetexcept();
 
 	return (__unmasked);
 }
