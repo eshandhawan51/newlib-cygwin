@@ -308,27 +308,6 @@ int fegetexcept(void)
 	return (__unmasked);
 }
 
-__fenv_static inline int
-fegetround(void)
-{
-	fenv_t __fpsr;
-
-	vmrs_fpscr(__fpsr);
-	return (__fpsr & _ROUND_MASK);
-}
-
-__fenv_static inline int
-fesetround(int round)
-{
-	fenv_t __fpsr;
-
-	vmrs_fpscr(__fpsr);
-	__fpsr &= ~(_ROUND_MASK);
-	__fpsr |= round;
-	vmsr_fpscr(__fpsr);
-	return (0);
-}
-
 #ifndef SOFTFP_ABI
 __vfp_fegetround(void)
 {
