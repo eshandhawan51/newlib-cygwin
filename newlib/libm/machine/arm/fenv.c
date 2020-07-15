@@ -56,7 +56,6 @@ const fenv_t *_fe_dfl_env = &__fe_dfl_env;
 
 /* If this is a non-mangled softfp version special processing is required */
 #if defined(FENV_MANGLE) || !defined(SOFTFP_ABI) || !defined(FENV_ARMv6)
-
 /*
  * The following macros map between the softfloat emulator's flags and
  * the hardware's FPSR.  The hardware this file was written for doesn't
@@ -64,8 +63,7 @@ const fenv_t *_fe_dfl_env = &__fe_dfl_env;
  */
 #ifndef SOFTFP_ABI
 #include <machine/fenv-vfp.h>
-
-#endif /* __ARM_PCS_VFP */
+#endif
 
 #ifdef __GNUC_GNU_INLINE__
 #error "This file must be compiled with C99 'inline' semantics"
@@ -213,6 +211,7 @@ int fegetround(void)
 		return 0;
 #endif
 
+#endif
 }
 
 int fesetround(int round)
@@ -247,7 +246,6 @@ int feholdexcept(fenv_t *envp)
 #ifndef SOFTFP_ABI
 		__vfp_feholdexcept(&__vfp_envp);
 #endif
-	__softfp_feholdexcept(envp);
 	*envp |= __vfp_envp;
 
 	return (0);
