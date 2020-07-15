@@ -29,7 +29,6 @@
  * $FreeBSD$
  */
 
-#define	__fenv_static
 #include <fenv.h>
 
 #include <machine/acle-compat.h>
@@ -43,65 +42,25 @@
 #define SOFTFP_ABI
 #endif
 
-#ifndef FENV_MANGLE
-/*
- * Hopefully the system ID byte is immutable, so it's valid to use
- * this as a default environment.
- */
 fenv_t __fe_dfl_env = { 0 };
 
 const fenv_t *_fe_dfl_env = &__fe_dfl_env;
-#endif
-
-
-/* If this is a non-mangled softfp version special processing is required */
-#if defined(FENV_MANGLE) || !defined(SOFTFP_ABI) || !defined(FENV_ARMv6)
-/*
- * The following macros map between the softfloat emulator's flags and
- * the hardware's FPSR.  The hardware this file was written for doesn't
- * have rounding control bits, so we stick those in the system ID byte.
- */
-#ifndef SOFTFP_ABI
-#include <machine/fenv-vfp.h>
-#endif
-
-#ifdef __GNUC_GNU_INLINE__
-#error "This file must be compiled with C99 'inline' semantics"
-#endif
-
-extern inline int feclearexcept(int excepts);
-extern inline int fegetexceptflag(fexcept_t *flagp, int excepts);
-extern inline int fesetexceptflag(const fexcept_t *flagp, int excepts);
-extern inline int feraiseexcept(int excepts);
-extern inline int fetestexcept(int excepts);
-extern inline int fegetround(void);
-extern inline int fesetround(int round);
-extern inline int fegetenv(fenv_t *envp);
-extern inline int feholdexcept(fenv_t *envp);
-extern inline int fesetenv(const fenv_t *envp);
-extern inline int feupdateenv(const fenv_t *envp);
-extern inline int feenableexcept(int __mask);
-extern inline int fedisableexcept(int __mask);
-extern inline int fegetexcept(void);
-
-#else /* !FENV_MANGLE && SOFTFP_ABI */
-/* Set by libc when the VFP unit is enabled */
 
 #ifndef SOFTFP_ABI
-int __vfp_feclearexcept(int excepts);
-int __vfp_fegetexceptflag(fexcept_t *flagp, int excepts);
-int __vfp_fesetexceptflag(const fexcept_t *flagp, int excepts);
-int __vfp_feraiseexcept(int excepts);
-int __vfp_fetestexcept(int excepts);
-int __vfp_fegetround(void);
-int __vfp_fesetround(int round);
-int __vfp_fegetenv(fenv_t *envp);
-int __vfp_feholdexcept(fenv_t *envp);
-int __vfp_fesetenv(const fenv_t *envp);
-int __vfp_feupdateenv(const fenv_t *envp);
-int __vfp_feenableexcept(int __mask);
-int __vfp_fedisableexcept(int __mask);
-int __vfp_fegetexcept(void);
+#define	vmrs_fpscr(__r)	__asm __volatile("vmrs %0, fpscr" : "=&r"(__r))
+#define	vmsr_fpscr(__r)	__asm __volatile("vmsr fpscr, %0" : : "r"(__r))
+#endif
+
+#define _FPU_MASK_SHIFT	8
+
+#ifndef SOFTFP_ABI
+__vfp_fesetround(int round);
+__vfp_fegetround(void);
+#if __BSD_VISIBLE
+__vfp_feenableexcept(int __mask);
+__vfp_fedisableexcept(int __mask);
+__vfp_fegetexcept(void);
+#endif
 #endif
 
 static int
@@ -142,7 +101,11 @@ int feclearexcept(int excepts)
 {
 
 #ifndef SOFTFP_ABI
-		__vfp_feclearexcept(excepts);
+		fexcept_t __fpsr;
+
+	vmrs_fpscr(__fpsr);
+	__fpsr &= ~excepts;
+	vmsr_fpscr(__fpsr);
 #endif
 	
 
@@ -151,14 +114,15 @@ int feclearexcept(int excepts)
 
 int fegetexceptflag(fexcept_t *flagp, int excepts)
 {
-	fexcept_t __vfp_flagp;
 
-	__vfp_flagp = 0;
 #ifndef SOFTFP_ABI
-		__vfp_fegetexceptflag(&__vfp_flagp, excepts);
+		fexcept_t __fpsr;
+
+	vmrs_fpscr(__fpsr);
+	__fpsr &= ~excepts;
+	__fpsr |= *flagp & excepts;
+	vmsr_fpscr(__fpsr);
 #endif
-	
-	*flagp |= __vfp_flagp;
 
 	return (0);
 }
@@ -167,7 +131,12 @@ int fesetexceptflag(const fexcept_t *flagp, int excepts)
 {
 
 #ifndef SOFTFP_ABI
-		__vfp_fesetexceptflag(flagp, excepts);
+		fexcept_t __fpsr;
+
+	vmrs_fpscr(__fpsr);
+	__fpsr &= ~excepts;
+	__fpsr |= *flagp & excepts;
+	vmsr_fpscr(__fpsr);
 #endif
 
 	return (0);
@@ -177,7 +146,9 @@ int feraiseexcept(int excepts)
 {
 
 #ifndef SOFTFP_ABI
-		__vfp_feraiseexcept(excepts);
+		fexcept_t __ex = excepts;
+
+	fesetexceptflag(&__ex, excepts);
 #endif
 
 	return (0);
@@ -189,7 +160,10 @@ int fetestexcept(int excepts)
 
 	__got_excepts = 0;
 #ifndef SOFTFP_ABI
-		__got_excepts = __vfp_fetestexcept(excepts);
+		fexcept_t __fpsr;
+
+	vmrs_fpscr(__fpsr);
+	return (__fpsr & excepts);
 #endif
 
 	return (__got_excepts);
@@ -230,7 +204,8 @@ int fegetenv(fenv_t *envp)
 
 	__vfp_envp = 0;
 #ifndef SOFTFP_ABI
-		__vfp_fegetenv(&__vfp_envp);
+		vmrs_fpscr(*envp);
+		return 0;
 #endif
 
 	*envp |= __vfp_envp;
@@ -244,7 +219,14 @@ int feholdexcept(fenv_t *envp)
 
 	__vfp_envp = 0;
 #ifndef SOFTFP_ABI
-		__vfp_feholdexcept(&__vfp_envp);
+		fenv_t __env;
+
+	vmrs_fpscr(__env);
+	*envp = __env;
+	__env &= ~(FE_ALL_EXCEPT);
+	vmsr_fpscr(__env);
+	return (0);
+
 #endif
 	*envp |= __vfp_envp;
 
@@ -255,7 +237,7 @@ int fesetenv(const fenv_t *envp)
 {
 
 #ifndef SOFTFP_ABI
-		__vfp_fesetenv(envp);
+		vmsr_fpscr(*envp);
 #endif
 
 
@@ -266,7 +248,11 @@ int feupdateenv(const fenv_t *envp)
 {
 
 #ifndef SOFTFP_ABI
-		__vfp_feupdateenv(envp);
+		fexcept_t __fpsr;
+
+	vmrs_fpscr(__fpsr);
+	vmsr_fpscr(*envp);
+	feraiseexcept(__fpsr & FE_ALL_EXCEPT);
 
 		return 0;
 #endif
@@ -321,6 +307,83 @@ int fegetexcept(void)
 
 	return (__unmasked);
 }
+
+__fenv_static inline int
+fegetround(void)
+{
+	fenv_t __fpsr;
+
+	vmrs_fpscr(__fpsr);
+	return (__fpsr & _ROUND_MASK);
+}
+
+__fenv_static inline int
+fesetround(int round)
+{
+	fenv_t __fpsr;
+
+	vmrs_fpscr(__fpsr);
+	__fpsr &= ~(_ROUND_MASK);
+	__fpsr |= round;
+	vmsr_fpscr(__fpsr);
+	return (0);
+}
+
+#ifndef SOFTFP_ABI
+__vfp_fegetround(void)
+{
+	fenv_t __fpsr;
+
+	vmrs_fpscr(__fpsr);
+	return (__fpsr & _ROUND_MASK);
+}
+
+__vfp_fesetround(int round)
+{
+	fenv_t __fpsr;
+
+	vmrs_fpscr(__fpsr);
+	__fpsr &= ~(_ROUND_MASK);
+	__fpsr |= round;
+	vmsr_fpscr(__fpsr);
+	return (0);
+}
+
+#if __BSD_VISIBLE
+
+/* We currently provide no external definitions of the functions below. */
+
+__vfp_feenableexcept(int __mask)
+{
+	fenv_t __old_fpsr, __new_fpsr;
+
+	vmrs_fpscr(__old_fpsr);
+	__new_fpsr = __old_fpsr |
+	    ((__mask & FE_ALL_EXCEPT) << _FPU_MASK_SHIFT);
+	vmsr_fpscr(__new_fpsr);
+	return ((__old_fpsr >> _FPU_MASK_SHIFT) & FE_ALL_EXCEPT);
+}
+
+__vfp_fedisableexcept(int __mask)
+{
+	fenv_t __old_fpsr, __new_fpsr;
+
+	vmrs_fpscr(__old_fpsr);
+	__new_fpsr = __old_fpsr &
+	    ~((__mask & FE_ALL_EXCEPT) << _FPU_MASK_SHIFT);
+	vmsr_fpscr(__new_fpsr);
+	return ((__old_fpsr >> _FPU_MASK_SHIFT) & FE_ALL_EXCEPT);
+}
+
+__vfp_fegetexcept(void)
+{
+	fenv_t __fpsr;
+
+	vmrs_fpscr(__fpsr);
+	return (__fpsr & FE_ALL_EXCEPT);
+}
+
+#endif /* __BSD_VISIBLE */
 
 #endif
 
