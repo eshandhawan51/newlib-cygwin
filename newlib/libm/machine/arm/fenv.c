@@ -63,51 +63,16 @@ __vfp_fegetexcept(void);
 #endif
 #endif
 
-static int
-__softfp_round_to_vfp(int round)
-{
-
-	switch (round) {
-	case FE_TONEAREST:
-	default:
-		return VFP_FE_TONEAREST;
-	case FE_TOWARDZERO:
-		return VFP_FE_TOWARDZERO;
-	case FE_UPWARD:
-		return VFP_FE_UPWARD;
-	case FE_DOWNWARD:
-		return VFP_FE_DOWNWARD;
-	}
-}
-
-static int
-__softfp_round_from_vfp(int round)
-{
-
-	switch (round) {
-	case VFP_FE_TONEAREST:
-	default:
-		return FE_TONEAREST;
-	case VFP_FE_TOWARDZERO:
-		return FE_TOWARDZERO;
-	case VFP_FE_UPWARD:
-		return FE_UPWARD;
-	case VFP_FE_DOWNWARD:
-		return FE_DOWNWARD;
-	}
-}
 
 int feclearexcept(int excepts)
 {
 
 #ifndef SOFTFP_ABI
-		fexcept_t __fpsr;
-
+	fexcept_t __fpsr;
 	vmrs_fpscr(__fpsr);
 	__fpsr &= ~excepts;
 	vmsr_fpscr(__fpsr);
 #endif
-	
 
 	return (0);
 }
@@ -116,8 +81,7 @@ int fegetexceptflag(fexcept_t *flagp, int excepts)
 {
 
 #ifndef SOFTFP_ABI
-		fexcept_t __fpsr;
-
+	fexcept_t __fpsr;
 	vmrs_fpscr(__fpsr);
 	__fpsr &= ~excepts;
 	__fpsr |= *flagp & excepts;
@@ -131,8 +95,7 @@ int fesetexceptflag(const fexcept_t *flagp, int excepts)
 {
 
 #ifndef SOFTFP_ABI
-		fexcept_t __fpsr;
-
+	fexcept_t __fpsr;
 	vmrs_fpscr(__fpsr);
 	__fpsr &= ~excepts;
 	__fpsr |= *flagp & excepts;
@@ -146,8 +109,7 @@ int feraiseexcept(int excepts)
 {
 
 #ifndef SOFTFP_ABI
-		fexcept_t __ex = excepts;
-
+	fexcept_t __ex = excepts;
 	fesetexceptflag(&__ex, excepts);
 #endif
 
@@ -156,24 +118,22 @@ int feraiseexcept(int excepts)
 
 int fetestexcept(int excepts)
 {
-	int __got_excepts;
-
-	__got_excepts = 0;
 #ifndef SOFTFP_ABI
-		fexcept_t __fpsr;
-
+	fexcept_t __fpsr;
 	vmrs_fpscr(__fpsr);
 	return (__fpsr & excepts);
 #endif
 
-	return (__got_excepts);
+	return (0);
 }
 
 int fegetround(void)
 {
 
 #ifndef SOFTFP_ABI
-		return __softfp_round_from_vfp(__vfp_fegetround());
+	fenv_t __fpsr;
+	vmrs_fpscr(__fpsr);
+	return (__fpsr & _ROUND_MASK);
 #endif
 
 #ifdef SOFTFP_ABI
@@ -192,7 +152,12 @@ int fesetround(int round)
 {
 
 #ifndef SOFTFP_ABI
-		__vfp_fesetround(__softfp_round_to_vfp(round));
+	fenv_t __fpsr;
+	vmrs_fpscr(__fpsr);
+	__fpsr &= ~(_ROUND_MASK);
+	__fpsr |= round;
+	vmsr_fpscr(__fpsr);
+	return (0);
 #endif
 
 	return (0);
@@ -200,27 +165,22 @@ int fesetround(int round)
 
 int fegetenv(fenv_t *envp)
 {
-	fenv_t __vfp_envp;
-
-	__vfp_envp = 0;
+	
 #ifndef SOFTFP_ABI
 		vmrs_fpscr(*envp);
 		return 0;
 #endif
 
-	*envp |= __vfp_envp;
+	*envp |= 0;
 
 	return (0);
 }
 
 int feholdexcept(fenv_t *envp)
 {
-	fenv_t __vfp_envp;
 
-	__vfp_envp = 0;
 #ifndef SOFTFP_ABI
-		fenv_t __env;
-
+	fenv_t __env;
 	vmrs_fpscr(__env);
 	*envp = __env;
 	__env &= ~(FE_ALL_EXCEPT);
@@ -228,7 +188,7 @@ int feholdexcept(fenv_t *envp)
 	return (0);
 
 #endif
-	*envp |= __vfp_envp;
+	*envp |= 0;
 
 	return (0);
 }
@@ -239,8 +199,6 @@ int fesetenv(const fenv_t *envp)
 #ifndef SOFTFP_ABI
 		vmsr_fpscr(*envp);
 #endif
-
-
 	return (0);
 }
 
@@ -248,16 +206,13 @@ int feupdateenv(const fenv_t *envp)
 {
 
 #ifndef SOFTFP_ABI
-		fexcept_t __fpsr;
-
+	fexcept_t __fpsr;
 	vmrs_fpscr(__fpsr);
 	vmsr_fpscr(*envp);
 	feraiseexcept(__fpsr & FE_ALL_EXCEPT);
 
-		return 0;
-#endif
-
-#ifdef SOFTFP_ABI
+	return 0;
+#else
 
 #if defined FE_NOMASK_ENV && FE_ALL_EXCEPT != 0
 
@@ -274,77 +229,23 @@ int feupdateenv(const fenv_t *envp)
 
 int feenableexcept(int __mask)
 {
-	int __unmasked;
-
-	__unmasked = 0;
+	
 #ifndef SOFTFP_ABI
-		__unmasked = __vfp_feenableexcept(__mask);
-#endif
-
-	return (__unmasked);
-}
-
-int fedisableexcept(int __mask)
-{
-	int __unmasked;
-
-	__unmasked = 0;
-#ifndef SOFTFP_ABI
-		__unmasked = __vfp_fedisableexcept(__mask);
-#endif
-
-	return (__unmasked);
-}
-
-int fegetexcept(void)
-{
-	int __unmasked;
-
-	__unmasked = 0;
-#ifndef SOFTFP_ABI
-		__unmasked = __vfp_fegetexcept();
-#endif
-
-	return (__unmasked);
-}
-
-#ifndef SOFTFP_ABI
-__vfp_fegetround(void)
-{
-	fenv_t __fpsr;
-
-	vmrs_fpscr(__fpsr);
-	return (__fpsr & _ROUND_MASK);
-}
-
-__vfp_fesetround(int round)
-{
-	fenv_t __fpsr;
-
-	vmrs_fpscr(__fpsr);
-	__fpsr &= ~(_ROUND_MASK);
-	__fpsr |= round;
-	vmsr_fpscr(__fpsr);
-	return (0);
-}
-
-#if __BSD_VISIBLE
-
-/* We currently provide no external definitions of the functions below. */
-
-__vfp_feenableexcept(int __mask)
-{
 	fenv_t __old_fpsr, __new_fpsr;
-
 	vmrs_fpscr(__old_fpsr);
 	__new_fpsr = __old_fpsr |
 	    ((__mask & FE_ALL_EXCEPT) << _FPU_MASK_SHIFT);
 	vmsr_fpscr(__new_fpsr);
 	return ((__old_fpsr >> _FPU_MASK_SHIFT) & FE_ALL_EXCEPT);
+#endif
+
+	return (0);
 }
 
-__vfp_fedisableexcept(int __mask)
+int fedisableexcept(int __mask)
 {
+
+#ifndef SOFTFP_ABI
 	fenv_t __old_fpsr, __new_fpsr;
 
 	vmrs_fpscr(__old_fpsr);
@@ -352,17 +253,22 @@ __vfp_fedisableexcept(int __mask)
 	    ~((__mask & FE_ALL_EXCEPT) << _FPU_MASK_SHIFT);
 	vmsr_fpscr(__new_fpsr);
 	return ((__old_fpsr >> _FPU_MASK_SHIFT) & FE_ALL_EXCEPT);
+#endif
+
+	return (0);
 }
 
-__vfp_fegetexcept(void)
+int fegetexcept(void)
 {
+
+#ifndef SOFTFP_ABI
 	fenv_t __fpsr;
 
 	vmrs_fpscr(__fpsr);
 	return (__fpsr & FE_ALL_EXCEPT);
+#endif
+
+	return (0);
 }
 
-#endif /* __BSD_VISIBLE */
-
-#endif
 
