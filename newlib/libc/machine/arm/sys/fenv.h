@@ -63,10 +63,10 @@ typedef int fexcept_t;
 
 
 /* Rounding modes */
-#define	_FE_TONEAREST		0x00000000
-#define	_FE_UPWARD		0x00400000
-#define	_FE_DOWNWARD		0x00800000
-#define	_FE_TOWARDZERO		0x00c00000
+#define	FE_TONEAREST		0x00000000
+#define	FE_UPWARD		0x00400000
+#define	FE_DOWNWARD		0x00800000
+#define	FE_TOWARDZERO		0x00c00000
 
 #define	_ROUND_MASK	(FE_TONEAREST | FE_DOWNWARD | \
 			 FE_UPWARD | FE_TOWARDZERO)

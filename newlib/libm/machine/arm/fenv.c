@@ -53,17 +53,6 @@ const fenv_t *_fe_dfl_env = &__fe_dfl_env;
 
 #define _FPU_MASK_SHIFT	8
 
-#ifndef SOFTFP_ABI
-__vfp_fesetround(int round);
-__vfp_fegetround(void);
-#if __BSD_VISIBLE
-__vfp_feenableexcept(int __mask);
-__vfp_fedisableexcept(int __mask);
-__vfp_fegetexcept(void);
-#endif
-#endif
-
-
 int feclearexcept(int excepts)
 {
 
