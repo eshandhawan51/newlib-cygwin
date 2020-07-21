@@ -296,7 +296,7 @@ dumper::collect_memory_sections ()
     return 0;
 
   LPBYTE current_page_address;
-  LPBYTE last_base = (LPBYTE) 0xFFFFFFFF;
+  LPBYTE last_base = (LPBYTE) -1;
   SIZE_T last_size = (SIZE_T) 0;
   SIZE_T done;
 
@@ -307,7 +307,7 @@ dumper::collect_memory_sections ()
   if (hProcess == NULL)
     return 0;
 
-  for (current_page_address = 0; current_page_address < (LPBYTE) 0xFFFF0000;)
+  for (current_page_address = 0; current_page_address < (LPBYTE) -1;)
     {
       if (!VirtualQueryEx (hProcess, current_page_address, &mbi, sizeof (mbi)))
 	break;
@@ -502,7 +502,11 @@ dumper::dump_module (asection * to, process_module * module)
   strncpy (header.elf_note_header.name, "win32module", NOTE_NAME_SIZE);
 #pragma GCC diagnostic pop
 
+#ifdef __x86_64__
+  module_pstatus_ptr->data_type = NOTE_INFO_MODULE64;
+#else
   module_pstatus_ptr->data_type = NOTE_INFO_MODULE;
+#endif
   module_pstatus_ptr->data.module_info.base_address = module->base_address;
   module_pstatus_ptr->data.module_info.module_name_size = strlen (module->name) + 1;
   strcpy (module_pstatus_ptr->data.module_info.module_name, module->name);
@@ -645,7 +649,13 @@ dumper::init_core_dump ()
 {
   bfd_init ();
 
-  core_bfd = bfd_openw (file_name, "elf32-i386");
+#ifdef __x86_64__
+  const char *target = "elf64-x86-64";
+#else
+  const char *target = "elf32-i386";
+#endif
+
+  core_bfd = bfd_openw (file_name, target);
   if (core_bfd == NULL)
     {
       bfd_perror ("opening bfd");
@@ -658,7 +668,7 @@ dumper::init_core_dump ()
       goto failed;
     }
 
-  if (!bfd_set_arch_mach (core_bfd, bfd_arch_i386, 0))
+  if (!bfd_set_arch_mach (core_bfd, bfd_arch_i386, 0 /* = default */))
     {
       bfd_perror ("setting bfd architecture");
       goto failed;

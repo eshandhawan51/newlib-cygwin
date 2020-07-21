@@ -548,6 +548,7 @@ fhandler_pty_master::accept_input ()
 
   WaitForSingleObject (input_mutex, INFINITE);
 
+  char *p = rabuf () + raixget ();
   bytes_left = eat_readahead (-1);
 
   if (to_be_read_from_pcon ())
@@ -559,7 +560,6 @@ fhandler_pty_master::accept_input ()
     }
   else
     {
-      char *p = rabuf ();
       DWORD rc;
       DWORD written = 0;
 
@@ -969,11 +969,6 @@ fhandler_pty_slave::open (int flags, mode_t)
       init_console_handler (true);
     }
 
-  isHybrid = false;
-  get_ttyp ()->pcon_pid = 0;
-  get_ttyp ()->switch_to_pcon_in = false;
-  get_ttyp ()->switch_to_pcon_out = false;
-
   set_open_status ();
   return 1;
 
@@ -1171,10 +1166,10 @@ fhandler_pty_slave::update_pcon_input_state (bool need_lock)
 	  '\n',
 	  '\r'
 	};
-	if (is_line_input () && memchr (eols, c, sizeof (eols)))
+	if (is_line_input () && c && memchr (eols, c, sizeof (eols)))
 	  saw_accept = true;
-	if ((get_ttyp ()->ti.c_lflag & ISIG) &&
-	    memchr (sigs, c, sizeof (sigs)))
+	if ((get_ttyp ()->ti.c_lflag & ISIG)
+	    && c && memchr (sigs, c, sizeof (sigs)))
 	  saw_accept = true;
       }
   get_ttyp ()->pcon_in_empty = pipe_empty && !(ralen () > raixget ());
@@ -1189,7 +1184,7 @@ fhandler_pty_slave::update_pcon_input_state (bool need_lock)
 int
 fhandler_pty_slave::eat_readahead (int n)
 {
-  int oralen = ralen () - raixget ();
+  int oralen = ralen ();
   if (n < 0)
     n = ralen () - raixget ();
   if (n > 0 && ralen () > raixget ())
@@ -1202,7 +1197,8 @@ fhandler_pty_slave::eat_readahead (int n)
       };
       while (n > 0 && ralen () > raixget ())
 	{
-	  if (memchr (eols, rabuf ()[ralen ()-1], sizeof (eols)))
+	  if (is_line_input () && rabuf ()[ralen ()-1]
+	      && memchr (eols, rabuf ()[ralen ()-1], sizeof (eols)))
 	    break;
 	  -- n;
 	  -- ralen ();
@@ -1213,15 +1209,15 @@ fhandler_pty_slave::eat_readahead (int n)
 	 if we only erase a single byte, invalid unicode chars are left in
 	 the input. */
       if (get_ttyp ()->ti.c_iflag & IUTF8)
-	while (ralen () > 0 &&
+	while (ralen () > raixget () &&
 	       ((unsigned char) rabuf ()[ralen ()] & 0xc0) == 0x80)
 	  --ralen ();
-
-      if (raixget () >= ralen ())
-	raixget () = raixput () = ralen () = 0;
-      else if (raixput () > ralen ())
-	raixput () = ralen ();
     }
+  oralen = oralen - ralen ();
+  if (raixget () >= ralen ())
+    raixget () = raixput () = ralen () = 0;
+  else if (raixput () > ralen ())
+    raixput () = ralen ();
 
   return oralen;
 }
@@ -1245,7 +1241,7 @@ fhandler_pty_slave::get_readahead_into_buffer (char *buf, size_t buflen)
 	};
 	buf[copied_chars++] = (unsigned char)(ch & 0xff);
 	buflen--;
-	if (is_line_input () && memchr (eols, ch & 0xff, sizeof (eols)))
+	if (is_line_input () && ch && memchr (eols, ch & 0xff, sizeof (eols)))
 	  break;
       }
 
@@ -1264,7 +1260,7 @@ fhandler_pty_slave::get_readahead_valid (void)
 	'\n'
       };
       for (size_t i=raixget (); i<ralen (); i++)
-	if (memchr (eols, rabuf ()[i], sizeof (eols)))
+	if (rabuf ()[i] && memchr (eols, rabuf ()[i], sizeof (eols)))
 	  return true;
       return false;
     }
@@ -1277,6 +1273,7 @@ fhandler_pty_slave::set_switch_to_pcon (int fd_set)
 {
   if (fd < 0)
     fd = fd_set;
+  acquire_output_mutex (INFINITE);
   if (fd == 0 && !get_ttyp ()->switch_to_pcon_in)
     {
       pull_pcon_input ();
@@ -1286,13 +1283,13 @@ fhandler_pty_slave::set_switch_to_pcon (int fd_set)
       get_ttyp ()->switch_to_pcon_in = true;
       if (isHybrid && !get_ttyp ()->switch_to_pcon_out)
 	{
-	  wait_pcon_fwd ();
+	  get_ttyp ()->wait_pcon_fwd ();
 	  get_ttyp ()->switch_to_pcon_out = true;
 	}
     }
   else if ((fd == 1 || fd == 2) && !get_ttyp ()->switch_to_pcon_out)
     {
-      wait_pcon_fwd ();
+      get_ttyp ()->wait_pcon_fwd ();
       if (get_ttyp ()->pcon_pid == 0 ||
 	  !pinfo (get_ttyp ()->pcon_pid))
 	get_ttyp ()->pcon_pid = myself->pid;
@@ -1300,6 +1297,7 @@ fhandler_pty_slave::set_switch_to_pcon (int fd_set)
       if (isHybrid)
 	get_ttyp ()->switch_to_pcon_in = true;
     }
+  release_output_mutex ();
 }
 
 void
@@ -1314,12 +1312,14 @@ fhandler_pty_slave::reset_switch_to_pcon (void)
     return;
   if (do_not_reset_switch_to_pcon)
     return;
+  acquire_output_mutex (INFINITE);
   if (get_ttyp ()->switch_to_pcon_out)
     /* Wait for pty_master_fwd_thread() */
-    wait_pcon_fwd ();
+    get_ttyp ()->wait_pcon_fwd ();
   get_ttyp ()->pcon_pid = 0;
   get_ttyp ()->switch_to_pcon_in = false;
   get_ttyp ()->switch_to_pcon_out = false;
+  release_output_mutex ();
   init_console_handler (true);
 }
 
@@ -1372,7 +1372,7 @@ fhandler_pty_slave::push_to_pcon_screenbuffer (const char *ptr, size_t len,
 	  p0 = (char *) memmem (p1, nlen - (p1-buf), "\033[?1049h", 8);
 	  if (p0)
 	    {
-	      p0 += 8;
+	      //p0 += 8;
 	      get_ttyp ()->screen_alternated = true;
 	      if (get_ttyp ()->switch_to_pcon_out)
 		do_not_reset_switch_to_pcon = true;
@@ -1384,7 +1384,7 @@ fhandler_pty_slave::push_to_pcon_screenbuffer (const char *ptr, size_t len,
 	  p1 = (char *) memmem (p0, nlen - (p0-buf), "\033[?1049l", 8);
 	  if (p1)
 	    {
-	      //p1 += 8;
+	      p1 += 8;
 	      get_ttyp ()->screen_alternated = false;
 	      do_not_reset_switch_to_pcon = false;
 	      memmove (p0, p1, buf+nlen - p1);
@@ -1504,8 +1504,9 @@ fhandler_pty_slave::write (const void *ptr, size_t len)
 
   reset_switch_to_pcon ();
 
-  bool output_to_pcon =
-    get_ttyp ()->switch_to_pcon_out && !get_ttyp ()->screen_alternated;
+  acquire_output_mutex (INFINITE);
+  bool output_to_pcon = get_ttyp ()->switch_to_pcon_out;
+  release_output_mutex ();
 
   UINT target_code_page = output_to_pcon ?
     GetConsoleOutputCP () : get_ttyp ()->term_code_page;
@@ -2420,8 +2421,6 @@ fhandler_pty_master::close ()
 	    }
 	  release_output_mutex ();
 	  master_fwd_thread->terminate_thread ();
-	  CloseHandle (get_ttyp ()->fwd_done);
-	  get_ttyp ()->fwd_done = NULL;
 	}
     }
 
@@ -2551,7 +2550,7 @@ fhandler_pty_master::write (const void *ptr, size_t len)
       };
       if (tc ()->ti.c_lflag & ISIG)
 	for (size_t i=0; i<sizeof (sigs); i++)
-	  if (memchr (buf, sigs[i], nlen))
+	  if (sigs[i] && memchr (buf, sigs[i], nlen))
 	    {
 	      eat_readahead (-1);
 	      SetEvent (input_available_event);
@@ -2904,17 +2903,6 @@ fhandler_pty_slave::set_freeconsole_on_close (bool val)
 }
 
 void
-fhandler_pty_slave::wait_pcon_fwd (void)
-{
-  acquire_output_mutex (INFINITE);
-  get_ttyp ()->pcon_last_time = GetTickCount ();
-  ResetEvent (get_ttyp ()->fwd_done);
-  release_output_mutex ();
-  while (get_ttyp ()->fwd_done
-	 && cygwait (get_ttyp ()->fwd_done, 1) == WAIT_TIMEOUT);
-}
-
-void
 fhandler_pty_slave::trigger_redraw_screen (void)
 {
   /* Forcibly redraw screen based on console screen buffer. */
@@ -2967,12 +2955,14 @@ fhandler_pty_slave::fixup_after_attach (bool native_maybe, int fd_set)
 	    {
 	      DWORD mode = ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT;
 	      SetConsoleMode (get_output_handle (), mode);
+	      acquire_output_mutex (INFINITE);
 	      if (!get_ttyp ()->switch_to_pcon_out)
-		wait_pcon_fwd ();
+		get_ttyp ()->wait_pcon_fwd ();
 	      if (get_ttyp ()->pcon_pid == 0 ||
 		  !pinfo (get_ttyp ()->pcon_pid))
 		get_ttyp ()->pcon_pid = myself->pid;
 	      get_ttyp ()->switch_to_pcon_out = true;
+	      release_output_mutex ();
 
 	      if (get_ttyp ()->need_redraw_screen)
 		trigger_redraw_screen ();
@@ -3230,12 +3220,6 @@ fhandler_pty_master::transfer_input_to_pcon (void)
       if (WriteFile (to_slave, buf, n, &n, 0))
 	transfered += n;
     }
-  DWORD bytes_left = eat_readahead (-1);
-  if (bytes_left)
-    {
-      if (WriteFile (to_slave, rabuf (), bytes_left, &n, NULL))
-	transfered += n;
-    }
   if (transfered)
     get_ttyp ()->pcon_in_empty = false;
   ReleaseMutex (input_mutex);
@@ -3258,19 +3242,9 @@ fhandler_pty_master::pty_master_fwd_thread ()
     {
       if (get_pseudo_console ())
 	{
-	  /* The forwarding in pseudo console sometimes stops for
-	     16-32 msec even if it already has data to transfer.
-	     If the time without transfer exceeds 32 msec, the
-	     forwarding is supposed to be finished. */
-	  const int sleep_in_pcon = 16;
-	  const int time_to_wait = sleep_in_pcon * 2 + 1/* margine */;
 	  get_ttyp ()->pcon_last_time = GetTickCount ();
 	  while (::bytes_available (rlen, from_slave) && rlen == 0)
 	    {
-	      acquire_output_mutex (INFINITE);
-	      if (GetTickCount () - get_ttyp ()->pcon_last_time > time_to_wait)
-		SetEvent (get_ttyp ()->fwd_done);
-	      release_output_mutex ();
 	      /* Forcibly transfer input if it is requested by slave.
 		 This happens when input data should be transfered
 		 from the input pipe for cygwin apps to the input pipe
@@ -3332,6 +3306,34 @@ fhandler_pty_master::pty_master_fwd_thread ()
 		continue;
 	      }
 
+	  /* Remove CSI > Pm m */
+	  state = 0;
+	  start_at = 0;
+	  for (DWORD i=0; i<rlen; i++)
+	    if (outbuf[i] == '\033')
+	      {
+		start_at = i;
+		state = 1;
+		continue;
+	      }
+	    else if ((state == 1 && outbuf[i] == '[') ||
+		     (state == 2 && outbuf[i] == '>'))
+	      {
+		state ++;
+		continue;
+	      }
+	    else if (state == 3 && (isdigit (outbuf[i]) || outbuf[i] == ';'))
+	      continue;
+	    else if (state == 3 && outbuf[i] == 'm')
+	      {
+		memmove (&outbuf[start_at], &outbuf[i+1], rlen-i-1);
+		rlen = wlen = start_at + rlen - i - 1;
+		state = 0;
+		continue;
+	      }
+	    else
+	      state = 0;
+
 	  size_t nlen;
 	  char *buf = convert_mb_str
 	    (get_ttyp ()->term_code_page, &nlen, CP_UTF8, ptr, wlen);
@@ -3342,7 +3344,6 @@ fhandler_pty_master::pty_master_fwd_thread ()
 	  /* OPOST processing was already done in pseudo console,
 	     so just write it to to_master_cyg. */
 	  DWORD written;
-	  acquire_output_mutex (INFINITE);
 	  while (rlen>0)
 	    {
 	      if (!WriteFile (to_master_cyg, ptr, wlen, &written, NULL))
@@ -3353,7 +3354,6 @@ fhandler_pty_master::pty_master_fwd_thread ()
 	      ptr += written;
 	      wlen = (rlen -= written);
 	    }
-	  release_output_mutex ();
 	  mb_str_free (buf);
 	  continue;
 	}
@@ -3695,7 +3695,6 @@ fhandler_pty_master::setup ()
       errstr = "pty master forwarding thread";
       goto err;
     }
-  get_ttyp ()->fwd_done = CreateEvent (&sec_none, true, false, NULL);
 
   t.winsize.ws_col = 80;
   t.winsize.ws_row = 25;

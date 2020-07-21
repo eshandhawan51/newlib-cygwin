@@ -718,7 +718,14 @@ class fhandler_socket_wsock: public fhandler_socket
 class fhandler_socket_inet: public fhandler_socket_wsock
 {
  private:
-  bool oobinline; /* True if option SO_OOBINLINE is set */
+  bool oobinline;	/* True if option SO_OOBINLINE is set */
+  bool tcp_quickack;	/* True if quickack is enabled */
+  bool tcp_fastopen;	/* True if TCP_FASTOPEN is set on older systems */
+  int  tcp_keepidle;	/* TCP_KEEPIDLE value in secs on older systems */
+  int  tcp_keepcnt;	/* TCP_KEEPCNT value on older systems */
+  int  tcp_keepintvl;	/* TCP_KEEPINTVL value in secs on older systems */
+
+  int set_keepalive (int keepidle, int keepcnt, int keepintvl);
  protected:
   int af_local_connect () { return 0; }
 
@@ -1291,7 +1298,8 @@ struct fifo_client_handler
 {
   HANDLE h;
   fifo_client_connect_state state;
-  fifo_client_handler () : h (NULL), state (fc_unknown) {}
+  bool last_read;  /* true if our last successful read was from this client. */
+  fifo_client_handler () : h (NULL), state (fc_unknown), last_read (false) {}
   void close () { NtClose (h); }
   fifo_client_connect_state set_state ();
 };
@@ -1316,12 +1324,14 @@ struct fifo_reader_id_t
   }
 };
 
-/* Info needed by all readers of a FIFO, stored in named shared memory. */
+/* Info needed by all fhandlers for a given FIFO, stored in named
+   shared memory.  This is mostly for readers, but writers need access
+   in order to update the count of open writers. */
 class fifo_shmem_t
 {
-  LONG _nreaders;
+  LONG _nreaders, _nwriters;
   fifo_reader_id_t _owner, _prev_owner, _pending_owner;
-  af_unix_spinlock_t _owner_lock, _reading_lock, _reader_opening_lock;
+  af_unix_spinlock_t _owner_lock, _reading_lock, _nreaders_lock, _nwriters_lock;
 
   /* Info about shared memory block used for temporary storage of the
      owner's fc_handler list. */
@@ -1329,8 +1339,12 @@ class fifo_shmem_t
     _sh_fc_handler_updated;
 
 public:
+  int nreaders () const { return (int) _nreaders; }
   int inc_nreaders () { return (int) InterlockedIncrement (&_nreaders); }
   int dec_nreaders () { return (int) InterlockedDecrement (&_nreaders); }
+  int nwriters () const { return (int) _nwriters; }
+  int inc_nwriters () { return (int) InterlockedIncrement (&_nwriters); }
+  int dec_nwriters () { return (int) InterlockedDecrement (&_nwriters); }
 
   fifo_reader_id_t get_owner () const { return _owner; }
   void set_owner (fifo_reader_id_t fr_id) { _owner = fr_id; }
@@ -1343,8 +1357,10 @@ public:
   void owner_unlock () { _owner_lock.unlock (); }
   void reading_lock () { _reading_lock.lock (); }
   void reading_unlock () { _reading_lock.unlock (); }
-  void reader_opening_lock () { _reader_opening_lock.lock (); }
-  void reader_opening_unlock () { _reader_opening_lock.unlock (); }
+  void nreaders_lock () { _nreaders_lock.lock (); }
+  void nreaders_unlock () { _nreaders_lock.unlock (); }
+  void nwriters_lock () { _nwriters_lock.lock (); }
+  void nwriters_unlock () { _nwriters_lock.unlock (); }
 
   int get_shared_nhandlers () const { return (int) _sh_nhandlers; }
   void set_shared_nhandlers (int n) { InterlockedExchange (&_sh_nhandlers, n); }
@@ -1370,8 +1386,6 @@ class fhandler_fifo: public fhandler_base
   HANDLE owner_needed_evt;      /* The owner is closing. */
   HANDLE owner_found_evt;       /* A new owner has taken over. */
   HANDLE update_needed_evt;     /* shared_fc_handler needs updating. */
-  HANDLE check_write_ready_evt; /* write_ready needs to be checked. */
-  HANDLE write_ready_ok_evt;    /* check_write_ready is done. */
 
   /* Handles to non-shared events needed for fifo_reader_threads. */
   HANDLE cancel_evt;            /* Signal thread to terminate. */
@@ -1379,7 +1393,6 @@ class fhandler_fifo: public fhandler_base
 
   UNICODE_STRING pipe_name;
   WCHAR pipe_name_buf[CYGWIN_FIFO_PIPE_NAME_LEN + 1];
-  bool _maybe_eof;
   fifo_client_handler *fc_handler;     /* Dynamically growing array. */
   int shandlers;                       /* Size (capacity) of the array. */
   int nhandlers;                       /* Number of elements in the array. */
@@ -1407,15 +1420,25 @@ class fhandler_fifo: public fhandler_base
   void record_connection (fifo_client_handler&,
 			  fifo_client_connect_state = fc_connected);
 
-  int create_shmem ();
+  int create_shmem (bool only_open = false);
   int reopen_shmem ();
   int create_shared_fc_handler ();
   int reopen_shared_fc_handler ();
   int remap_shared_fc_handler (size_t);
 
+  int nreaders () const { return shmem->nreaders (); }
   int inc_nreaders () { return shmem->inc_nreaders (); }
   int dec_nreaders () { return shmem->dec_nreaders (); }
+  int nwriters () const { return shmem->nwriters (); }
+  int inc_nwriters () { return shmem->inc_nwriters (); }
+  int dec_nwriters () { return shmem->dec_nwriters (); }
+  void nreaders_lock () { shmem->nreaders_lock (); }
+  void nreaders_unlock () { shmem->nreaders_unlock (); }
+  void nwriters_lock () { shmem->nwriters_lock (); }
+  void nwriters_unlock () { shmem->nwriters_unlock (); }
 
+  fifo_reader_id_t get_owner () const { return shmem->get_owner (); }
+  void set_owner (fifo_reader_id_t fr_id) { shmem->set_owner (fr_id); }
   fifo_reader_id_t get_prev_owner () const { return shmem->get_prev_owner (); }
   void set_prev_owner (fifo_reader_id_t fr_id)
   { shmem->set_prev_owner (fr_id); }
@@ -1423,6 +1446,8 @@ class fhandler_fifo: public fhandler_base
   { return shmem->get_pending_owner (); }
   void set_pending_owner (fifo_reader_id_t fr_id)
   { shmem->set_pending_owner (fr_id); }
+  void owner_lock () { shmem->owner_lock (); }
+  void owner_unlock () { shmem->owner_unlock (); }
 
   void owner_needed ()
   {
@@ -1449,15 +1474,12 @@ class fhandler_fifo: public fhandler_base
   { return shmem->shared_fc_handler_updated (); }
   void shared_fc_handler_updated (bool val)
   { shmem->shared_fc_handler_updated (val); }
-  void check_write_ready ();
-  void reader_opening_lock () { shmem->reader_opening_lock (); }
-  void reader_opening_unlock () { shmem->reader_opening_unlock (); }
 
 public:
   fhandler_fifo ();
-  bool hit_eof ();
-  bool maybe_eof () const { return _maybe_eof; }
-  void maybe_eof (bool val) { _maybe_eof = val; }
+  /* Called if we appear to be at EOF after polling fc_handlers. */
+  bool hit_eof () const
+  { return !nwriters () && !IsEventSignalled (writer_opening); }
   int get_nhandlers () const { return nhandlers; }
   fifo_client_handler &get_fc_handler (int i) { return fc_handler[i]; }
   PUNICODE_STRING get_pipe_name ();
@@ -1465,13 +1487,7 @@ public:
   void fifo_client_lock () { _fifo_client_lock.lock (); }
   void fifo_client_unlock () { _fifo_client_lock.unlock (); }
 
-  fifo_reader_id_t get_me () const { return me; }
-  fifo_reader_id_t get_owner () const { return shmem->get_owner (); }
-  void set_owner (fifo_reader_id_t fr_id) { shmem->set_owner (fr_id); }
-  void owner_lock () { shmem->owner_lock (); }
-  void owner_unlock () { shmem->owner_unlock (); }
-
-  void take_ownership ();
+  DWORD take_ownership ();
   void reading_lock () { shmem->reading_lock (); }
   void reading_unlock () { shmem->reading_unlock (); }
 
@@ -2354,7 +2370,6 @@ class fhandler_pty_slave: public fhandler_pty_common
   void setup_locale (void);
   void set_freeconsole_on_close (bool val);
   void trigger_redraw_screen (void);
-  void wait_pcon_fwd (void);
   void pull_pcon_input (void);
   void update_pcon_input_state (bool need_lock);
 };

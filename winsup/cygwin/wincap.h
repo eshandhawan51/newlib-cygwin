@@ -40,6 +40,9 @@ struct wincaps
     unsigned has_con_broken_il_dl		: 1;
     unsigned has_con_esc_rep			: 1;
     unsigned has_extended_mem_api		: 1;
+    unsigned has_tcp_fastopen			: 1;
+    unsigned has_linux_tcp_keepalive_sockopts	: 1;
+    unsigned has_tcp_maxrtms			: 1;
   };
 };
 
@@ -103,6 +106,9 @@ public:
   bool	IMPLEMENT (has_con_broken_il_dl)
   bool	IMPLEMENT (has_con_esc_rep)
   bool	IMPLEMENT (has_extended_mem_api)
+  bool	IMPLEMENT (has_tcp_fastopen)
+  bool	IMPLEMENT (has_linux_tcp_keepalive_sockopts)
+  bool	IMPLEMENT (has_tcp_maxrtms)
 
   void disable_case_sensitive_dirs ()
   {
