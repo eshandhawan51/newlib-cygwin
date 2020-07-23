@@ -30,16 +30,12 @@
  */
 
 #include <fenv.h>
-#include "_fenv.h"
 
-int fetestexcept(int excepts)
-{
 #ifndef __SOFTFP__
-	fexcept_t __fpsr;
-
-	vmrs_fpscr(__fpsr);
-	return (__fpsr & excepts);
-#else
-	return (0);
+#define	vmrs_fpscr(__r)	__asm __volatile("vmrs %0, fpscr" : "=&r"(__r))
+#define	vmsr_fpscr(__r)	__asm __volatile("vmsr fpscr, %0" : : "r"(__r))
+#define	_FPU_MASK_SHIFT	8
+#define	_ROUND_MASK	(FE_TONEAREST | FE_DOWNWARD | \
+			 FE_UPWARD | FE_TOWARDZERO)
 #endif
-}
+

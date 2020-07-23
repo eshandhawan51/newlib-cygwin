@@ -32,14 +32,19 @@
 #include <fenv.h>
 #include "_fenv.h"
 
-int fetestexcept(int excepts)
+
+int feenableexcept(int __mask)
 {
 #ifndef __SOFTFP__
-	fexcept_t __fpsr;
+	fenv_t __old_fpsr, __new_fpsr;
 
-	vmrs_fpscr(__fpsr);
-	return (__fpsr & excepts);
+	vmrs_fpscr(__old_fpsr);
+	__new_fpsr = __old_fpsr |
+	    ((__mask & FE_ALL_EXCEPT) << _FPU_MASK_SHIFT);
+	vmsr_fpscr(__new_fpsr);
+	return ((__old_fpsr >> _FPU_MASK_SHIFT) & FE_ALL_EXCEPT);
 #else
 	return (0);
 #endif
 }
+

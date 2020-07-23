@@ -32,13 +32,13 @@
 #include <fenv.h>
 #include "_fenv.h"
 
-int fetestexcept(int excepts)
+int fegetexcept(void)
 {
 #ifndef __SOFTFP__
-	fexcept_t __fpsr;
+	fenv_t __fpsr;
 
 	vmrs_fpscr(__fpsr);
-	return (__fpsr & excepts);
+	return (__fpsr & FE_ALL_EXCEPT);
 #else
 	return (0);
 #endif
