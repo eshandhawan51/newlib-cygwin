@@ -209,6 +209,10 @@ extern int __fpclassifyf (float x);
 extern int __fpclassifyd (double x);
 extern int __signbitf (float x);
 extern int __signbitd (double x);
+extern int __isfinite (double x);
+extern int __isfinitef (float x);
+extern int __isnormal (double x);
+extern int __isnormalf (float x);
 
 /* Note: isinf and isnan were once functions in newlib that took double
  *       arguments.  C99 specifies that these names are reserved for macros

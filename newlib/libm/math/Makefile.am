@@ -25,7 +25,8 @@ src = 	k_standard.c k_rem_pio2.c \
 	s_frexp.c s_ldexp.c \
 	s_signif.c s_sin.c \
 	s_tan.c s_tanh.c \
-	w_exp2.c w_tgamma.c
+	w_exp2.c w_tgamma.c s_isfinite.c \
+	s_isnormal.c
 
 fsrc =	kf_rem_pio2.c \
 	kf_cos.c kf_sin.c kf_tan.c \
@@ -49,7 +50,7 @@ fsrc =	kf_rem_pio2.c \
 	sf_signif.c sf_sin.c \
 	sf_tan.c sf_tanh.c \
 	wf_exp2.c wf_tgamma.c \
-	wf_log2.c
+	wf_log2.c s_isfinitef.c s_isnormalf.c
 
 lsrc = el_hypot.c
 
