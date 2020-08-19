@@ -21,7 +21,6 @@
 * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-#ifdef _FTW_ENABLE_
 #include <ftw.h>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -143,12 +142,15 @@ int nftw(const char *path, int (*fn)(const char *, const struct stat *, int, str
 	}
 	memcpy(pathbuf, path, l+1);
 	
+#ifdef _STDIO_WITH_THREAD_CANCELLATION_SUPPORT
 	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
+#endif
 	r = do_nftw(pathbuf, fn, fd_limit, flags, NULL);
+#ifdef _STDIO_WITH_THREAD_CANCELLATION_SUPPORT
 	pthread_setcancelstate(cs, 0);
+#endif
 	return r;
 }
 
 weak_alias(nftw, nftw64);
 
-#endif /* _FTW_ENABLE_ */

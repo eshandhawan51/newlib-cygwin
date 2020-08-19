@@ -21,7 +21,6 @@
 * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-#ifdef _FTW_ENABLE_
 #include <ftw.h>
 
 int ftw(const char *path, int (*fn)(const char *, const struct stat *, int), int fd_limit)
@@ -33,4 +32,3 @@ int ftw(const char *path, int (*fn)(const char *, const struct stat *, int), int
 }
 
 weak_alias(ftw, ftw64);
-#endif /* _FTW_ENABLE_ */
